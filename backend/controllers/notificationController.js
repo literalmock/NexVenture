@@ -1,0 +1,312 @@
+import Notification from "../models/Notification.js";
+import Startup from "../models/Startup.js";
+import User from "../models/User.js";
+
+/**
+ * GET /notifications
+ * Fetch notifications for authenticated user, newest first.
+ */
+export async function getNotifications(req, res, next) {
+  try {
+    const notifications = await Notification.find({ recipient: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate("sender", "name avatarUrl role headline")
+      .exec();
+
+    const unreadCount = await Notification.countDocuments({
+      recipient: req.userId,
+      read: false,
+    });
+
+    const pendingRequestsCount = await Notification.countDocuments({
+      recipient: req.userId,
+      status: "pending",
+    });
+
+    return res.json({
+      success: true,
+      notifications: notifications.map(toNotificationDTO),
+      unreadCount,
+      pendingRequestsCount,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+/**
+ * POST /notifications/request
+ * Send an intro request, partnership, or job application to a startup/founder.
+ */
+export async function sendRequest(req, res, next) {
+  try {
+    const { startupId, type = "intro_request", message, recipientId } = req.body;
+    const sender = await User.findById(req.userId).exec();
+    if (!sender) {
+      return res.status(404).json({ success: false, error: "User not found." });
+    }
+
+    let targetRecipientId = recipientId;
+    let targetStartupName = "";
+
+    // If a startupId was provided, resolve the startup and its founder
+    if (startupId) {
+      const startup = await Startup.findOne({ id: startupId }).exec();
+      if (startup) {
+        targetStartupName = startup.name;
+        // Find founder user
+        const founderUser = await User.findOne({
+          $or: [
+            { linkedStartupId: startupId },
+            { name: new RegExp(`^${startup.founder}$`, "i") },
+            { role: "founder" },
+          ],
+        }).exec();
+
+        if (founderUser) {
+          targetRecipientId = founderUser._id;
+        }
+      }
+    }
+
+    // Default fallback to any founder if no recipient found
+    if (!targetRecipientId) {
+      const fallbackFounder = await User.findOne({ role: "founder" }).exec();
+      targetRecipientId = fallbackFounder ? fallbackFounder._id : sender._id;
+    }
+
+    if (targetRecipientId.toString() === req.userId.toString()) {
+      return res.status(400).json({
+        success: false,
+        error: "You cannot send an introduction request to yourself.",
+      });
+    }
+
+    // Check if an identical pending request already exists
+    const existing = await Notification.findOne({
+      recipient: targetRecipientId,
+      sender: req.userId,
+      type,
+      startupId: startupId || null,
+      status: "pending",
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        error: "You already have a pending request with this startup.",
+      });
+    }
+
+    const titleByType = {
+      intro_request: `Intro Request from ${sender.name}`,
+      application: `Job Application from ${sender.name}`,
+      mentorship: `Mentorship Request from ${sender.name}`,
+    };
+
+    const defaultMsgByType = {
+      intro_request: `${sender.name} (${sender.role}) requested an introduction${targetStartupName ? ` to ${targetStartupName}` : ""}.`,
+      application: `${sender.name} applied for an open position at ${targetStartupName || "your company"}.`,
+      mentorship: `${sender.name} sent a mentorship connection request.`,
+    };
+
+    const notification = await Notification.create({
+      recipient: targetRecipientId,
+      sender: sender._id,
+      type,
+      title: titleByType[type] || `New Request from ${sender.name}`,
+      message: message ? String(message).trim().slice(0, 500) : defaultMsgByType[type],
+      startupId: startupId || null,
+      startupName: targetStartupName || null,
+      status: "pending",
+      read: false,
+    });
+
+    const populated = await notification.populate("sender", "name avatarUrl role headline");
+
+    return res.status(201).json({
+      success: true,
+      notification: toNotificationDTO(populated),
+      message: "Request sent successfully! The company founder has been notified.",
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+/**
+ * PATCH /notifications/:id/respond
+ * Approve or Disapprove a pending request.
+ * Body: { action: 'approve' | 'disapprove' }
+ */
+export async function respondToRequest(req, res, next) {
+  try {
+    const { action } = req.body;
+    if (!["approve", "disapprove"].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: "Action must be either 'approve' or 'disapprove'.",
+      });
+    }
+
+    const notification = await Notification.findOne({
+      _id: req.params.id,
+      recipient: req.userId,
+    })
+      .populate("sender", "name avatarUrl role headline")
+      .exec();
+
+    if (!notification) {
+      return res.status(404).json({ success: false, error: "Notification request not found." });
+    }
+
+    const responder = await User.findById(req.userId).select("name role").exec();
+    const newStatus = action === "approve" ? "approved" : "rejected";
+
+    notification.status = newStatus;
+    notification.read = true;
+    await notification.save();
+
+    // Send reciprocal notification to the original sender
+    const statusText = action === "approve" ? "approved" : "declined";
+    await Notification.create({
+      recipient: notification.sender._id,
+      sender: req.userId,
+      type: "request_response",
+      title: action === "approve" ? "Request Approved! 🎉" : "Request Update",
+      message: `${responder?.name || "The founder"} ${statusText} your ${notification.type.replace("_", " ")}${notification.startupName ? ` for ${notification.startupName}` : ""}.`,
+      startupId: notification.startupId,
+      startupName: notification.startupName,
+      status: newStatus,
+      read: false,
+    });
+
+    return res.json({
+      success: true,
+      notification: toNotificationDTO(notification),
+      message: `Request successfully ${newStatus}.`,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+/**
+ * POST /notifications/rsvp
+ * RSVP to an ecosystem event and notify event coordinators.
+ */
+export async function rsvpEvent(req, res, next) {
+  try {
+    const { eventId, eventName } = req.body;
+    if (!eventId) {
+      return res.status(400).json({ success: false, error: "eventId is required." });
+    }
+
+    const user = await User.findById(req.userId).exec();
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found." });
+    }
+
+    const rsvps = user.workspace?.eventRsvps || [];
+    const isRsvpd = rsvps.includes(eventId);
+
+    if (isRsvpd) {
+      user.workspace.eventRsvps = rsvps.filter((id) => id !== eventId);
+    } else {
+      user.workspace.eventRsvps = [...rsvps, eventId];
+
+      // Notify founders/organizers about new attendee
+      const organizers = await User.find({
+        role: "founder",
+        _id: { $ne: req.userId },
+      }).limit(2);
+
+      for (const org of organizers) {
+        await Notification.create({
+          recipient: org._id,
+          sender: user._id,
+          type: "rsvp",
+          title: `New RSVP: ${eventName || "Ecosystem Event"}`,
+          message: `${user.name} (${user.role}) registered to attend ${eventName || "an event"}.`,
+          eventId,
+          status: "read",
+          read: false,
+        });
+      }
+    }
+
+    await user.save();
+
+    return res.json({
+      success: true,
+      rsvpd: !isRsvpd,
+      eventRsvps: user.workspace.eventRsvps,
+      message: !isRsvpd ? "Seat confirmed! You are registered." : "RSVP cancelled.",
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+/**
+ * PATCH /notifications/:id/read
+ * Mark single notification as read.
+ */
+export async function markNotificationRead(req, res, next) {
+  try {
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipient: req.userId },
+      { $set: { read: true } },
+      { new: true },
+    ).populate("sender", "name avatarUrl role headline");
+
+    if (!notification) {
+      return res.status(404).json({ success: false, error: "Notification not found." });
+    }
+
+    return res.json({ success: true, notification: toNotificationDTO(notification) });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+/**
+ * PATCH /notifications/mark-all-read
+ * Mark all notifications as read for current user.
+ */
+export async function markAllNotificationsRead(req, res, next) {
+  try {
+    await Notification.updateMany({ recipient: req.userId, read: false }, { $set: { read: true } });
+    return res.json({ success: true, message: "All notifications marked as read." });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ─── DTO ────────────────────────────────────────────────────────────────────
+
+function toNotificationDTO(n) {
+  return {
+    id: n._id.toString(),
+    recipient: n.recipient.toString(),
+    sender: n.sender
+      ? {
+          id: n.sender._id ? n.sender._id.toString() : n.sender.toString(),
+          name: n.sender.name || "Member",
+          avatarUrl: n.sender.avatarUrl || "",
+          role: n.sender.role || "member",
+          headline: n.sender.headline || "",
+        }
+      : null,
+    type: n.type,
+    title: n.title,
+    message: n.message,
+    startupId: n.startupId || null,
+    startupName: n.startupName || null,
+    eventId: n.eventId || null,
+    status: n.status || "pending",
+    read: Boolean(n.read),
+    createdAt: n.createdAt,
+  };
+}
