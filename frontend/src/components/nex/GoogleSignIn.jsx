@@ -3,11 +3,17 @@ import { FcGoogle } from "react-icons/fc";
 import { FiAlertTriangle, FiExternalLink } from "react-icons/fi";
 
 const GOOGLE_SCRIPT_ID = "google-identity-services";
+const googleIdentityState = {
+  scriptPromise: null,
+  initializedClientId: "",
+  credentialHandler: null,
+  errorHandler: null,
+};
 
 export function GoogleSignIn({ onCredential, disabled = false }) {
   const containerRef = useRef(null);
   const callbackRef = useRef(onCredential);
-  const [scriptReady, setScriptReady] = useState(Boolean(window.google?.accounts?.id));
+  const [scriptReady, setScriptReady] = useState(hasGoogleIdentity());
   const [oauthError, setOauthError] = useState(null);
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -18,61 +24,32 @@ export function GoogleSignIn({ onCredential, disabled = false }) {
   useEffect(() => {
     if (!clientId || scriptReady) return undefined;
 
-    let script = document.getElementById(GOOGLE_SCRIPT_ID);
-    const handleLoad = () => setScriptReady(true);
-    const handleError = () =>
-      setOauthError("Failed to load Google sign-in script. Check your network connection.");
+    let active = true;
+    loadGoogleIdentityScript()
+      .then(() => {
+        if (active) setScriptReady(true);
+      })
+      .catch(() => {
+        if (active) {
+          setOauthError("Failed to load Google sign-in script. Check your network connection.");
+        }
+      });
 
-    if (!script) {
-      script = document.createElement("script");
-      script.id = GOOGLE_SCRIPT_ID;
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
-    }
-
-    script.addEventListener("load", handleLoad);
-    script.addEventListener("error", handleError);
     return () => {
-      script?.removeEventListener("load", handleLoad);
-      script?.removeEventListener("error", handleError);
+      active = false;
     };
   }, [clientId, scriptReady]);
 
   useEffect(() => {
-    if (!clientId || !scriptReady || !containerRef.current || disabled) return;
+    if (!clientId || !scriptReady || !containerRef.current || oauthError) return undefined;
+
+    const credentialHandler = (credential) => callbackRef.current(credential);
+    const errorHandler = (message) => setOauthError(message);
+    googleIdentityState.credentialHandler = credentialHandler;
+    googleIdentityState.errorHandler = errorHandler;
 
     try {
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response) => {
-          if (response?.credential) {
-            callbackRef.current(response.credential);
-          } else {
-            setOauthError(
-              "Google did not return a valid credential. Please use email/password login.",
-            );
-          }
-        },
-        ux_mode: "popup",
-        auto_select: false,
-        cancel_on_tap_outside: true,
-        error_callback: (error) => {
-          // Handles popup_closed_by_user, access_denied, unknown, etc.
-          if (error?.type !== "popup_closed_by_user") {
-            const isOriginError = error?.type === "unknown" || error?.message?.includes("origin");
-            if (isOriginError) {
-              setOauthError(
-                "Google OAuth requires this domain to be authorized. " +
-                  "Add http://localhost:8080 to Authorized JavaScript origins in Google Cloud Console.",
-              );
-            } else {
-              setOauthError(`Google sign-in failed: ${error?.type ?? "unknown error"}`);
-            }
-          }
-        },
-      });
+      initializeGoogleIdentity(clientId);
       containerRef.current.replaceChildren();
       window.google.accounts.id.renderButton(containerRef.current, {
         type: "standard",
@@ -86,11 +63,20 @@ export function GoogleSignIn({ onCredential, disabled = false }) {
     } catch (err) {
       setOauthError(
         err?.message?.includes("origin")
-          ? "Google OAuth: add http://localhost:8080 to Authorized JavaScript origins in Google Cloud Console to enable Google sign-in."
-          : `Google sign-in initialization failed: ${err.message}`,
+          ? googleOriginMessage()
+          : `Google sign-in initialization failed: ${err?.message || "unknown error"}`,
       );
     }
-  }, [clientId, disabled, scriptReady]);
+
+    return () => {
+      if (googleIdentityState.credentialHandler === credentialHandler) {
+        googleIdentityState.credentialHandler = null;
+      }
+      if (googleIdentityState.errorHandler === errorHandler) {
+        googleIdentityState.errorHandler = null;
+      }
+    };
+  }, [clientId, oauthError, scriptReady]);
 
   // No client ID configured at all
   if (!clientId) {
@@ -130,6 +116,7 @@ export function GoogleSignIn({ onCredential, disabled = false }) {
           You can still sign in with your email and password below.
         </p>
         <button
+          type="button"
           onClick={() => setOauthError(null)}
           className="text-primary hover:underline font-medium"
         >
@@ -146,4 +133,87 @@ export function GoogleSignIn({ onCredential, disabled = false }) {
       className={disabled ? "pointer-events-none min-h-11 opacity-60" : "min-h-11"}
     />
   );
+}
+
+function loadGoogleIdentityScript() {
+  if (hasGoogleIdentity()) return Promise.resolve();
+  if (googleIdentityState.scriptPromise) return googleIdentityState.scriptPromise;
+
+  googleIdentityState.scriptPromise = new Promise((resolve, reject) => {
+    let script = document.getElementById(GOOGLE_SCRIPT_ID);
+    const handleLoad = () => resolve();
+    const handleError = () => reject(new Error("Failed to load Google sign-in script."));
+
+    if (!script) {
+      script = document.createElement("script");
+      script.id = GOOGLE_SCRIPT_ID;
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+
+    if (hasGoogleIdentity()) {
+      resolve();
+      return;
+    }
+
+    script.addEventListener("load", handleLoad, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+  });
+
+  return googleIdentityState.scriptPromise;
+}
+
+function initializeGoogleIdentity(clientId) {
+  if (googleIdentityState.initializedClientId === clientId) return;
+
+  window.google.accounts.id.initialize({
+    client_id: clientId,
+    callback: (response) => {
+      if (response?.credential) {
+        googleIdentityState.credentialHandler?.(response.credential);
+        return;
+      }
+
+      googleIdentityState.errorHandler?.(
+        "Google did not return a valid credential. Please use email/password login.",
+      );
+    },
+    ux_mode: "popup",
+    auto_select: false,
+    cancel_on_tap_outside: true,
+    error_callback: (error) => {
+      if (error?.type === "popup_closed_by_user") return;
+      googleIdentityState.errorHandler?.(formatGoogleError(error));
+    },
+  });
+
+  googleIdentityState.initializedClientId = clientId;
+}
+
+function formatGoogleError(error) {
+  const message = String(error?.message || "");
+  const type = String(error?.type || "unknown error");
+  const normalizedMessage = message.toLowerCase();
+  const normalizedType = type.toLowerCase();
+  const isOriginError =
+    normalizedType === "origin_mismatch" ||
+    normalizedType === "unknown" ||
+    normalizedType.includes("origin") ||
+    normalizedMessage.includes("origin");
+  if (isOriginError) return googleOriginMessage();
+  return `Google sign-in failed: ${type}`;
+}
+
+function googleOriginMessage() {
+  return `Google OAuth requires this domain to be authorized. Add ${currentOrigin()} to Authorized JavaScript origins in Google Cloud Console.`;
+}
+
+function currentOrigin() {
+  return typeof window === "undefined" ? "your frontend origin" : window.location.origin;
+}
+
+function hasGoogleIdentity() {
+  return Boolean(typeof window !== "undefined" && window.google?.accounts?.id?.initialize);
 }

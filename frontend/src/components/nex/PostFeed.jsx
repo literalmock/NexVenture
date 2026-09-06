@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  FiArrowUp,
   FiHeart,
   FiMessageCircle,
   FiMoreHorizontal,
@@ -14,11 +15,51 @@ import {
   deleteComment,
   deletePost,
   getFeedPosts,
+  getPostComments,
   likePost,
 } from "@/lib/api/postClient";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { USER_ROLE_BADGES } from "@/utils/enums";
+
+function Bone({ className }) {
+  return <div className={cn("shimmer rounded-full bg-secondary", className)} />;
+}
+
+function PostSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-3xl border border-border/60 bg-card/60 p-5">
+      <div className="flex items-center gap-3">
+        <Bone className="size-11 shrink-0 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Bone className="h-3 w-32" />
+          <Bone className="h-2.5 w-20" />
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        <Bone className="h-3 w-full" />
+        <Bone className="h-3 w-5/6" />
+        <Bone className="h-3 w-2/3" />
+      </div>
+      <div className="mt-5 flex gap-4 border-t border-border/50 pt-3">
+        <Bone className="h-3 w-12" />
+        <Bone className="h-3 w-20" />
+      </div>
+    </div>
+  );
+}
+
+function CommentSkeleton() {
+  return (
+    <div className="flex items-start gap-2.5 rounded-2xl bg-secondary/50 p-3">
+      <Bone className="size-7 shrink-0 rounded-full" />
+      <div className="flex-1 space-y-1.5">
+        <Bone className="h-2.5 w-24" />
+        <Bone className="h-2.5 w-full" />
+      </div>
+    </div>
+  );
+}
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -37,6 +78,34 @@ function PostCard({ post, currentUserId, onLike, onDelete, onCommentAdded, onCom
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [olderComments, setOlderComments] = useState([]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [noMoreOlder, setNoMoreOlder] = useState(false);
+  const seenCommentIds = useRef(new Set());
+
+  useEffect(() => {
+    for (const comment of post.comments || []) seenCommentIds.current.add(comment.id);
+  }, [post.comments]);
+
+  const visibleComments = [...olderComments, ...(post.comments || [])];
+  const canLoadOlder = post.hasMoreComments && !noMoreOlder;
+
+  async function handleLoadOlderComments() {
+    if (loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const before = olderComments.length + (post.comments?.length || 0);
+      const res = await getPostComments(post.id, { before, limit: 10 });
+      const fresh = res.comments.filter((c) => !seenCommentIds.current.has(c.id));
+      fresh.forEach((c) => seenCommentIds.current.add(c.id));
+      setOlderComments((prev) => [...fresh, ...prev]);
+      setNoMoreOlder(!res.hasMore);
+    } catch (err) {
+      console.error("Failed to load earlier comments:", err);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   const isOwn = currentUserId && post.author?.id === currentUserId;
   const initials = (post.author?.name ?? "?")
@@ -230,7 +299,39 @@ function PostCard({ post, currentUserId, onLike, onDelete, onCommentAdded, onCom
 
             {/* Comments List */}
             <div className="space-y-2.5">
-              {post.comments?.map((comment) => {
+              {canLoadOlder && (
+                <div className="flex justify-center pb-1">
+                  <button
+                    type="button"
+                    onClick={handleLoadOlderComments}
+                    disabled={loadingOlder}
+                    className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60"
+                  >
+                    {loadingOlder ? (
+                      <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    ) : (
+                      <FiArrowUp className="size-3" />
+                    )}
+                    {loadingOlder ? "Loading earlier comments…" : "Load earlier comments"}
+                  </button>
+                </div>
+              )}
+
+              <AnimatePresence initial={false}>
+                {loadingOlder && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="space-y-2.5 overflow-hidden"
+                  >
+                    <CommentSkeleton />
+                    <CommentSkeleton />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {visibleComments.map((comment) => {
                 const commentInitials = (comment.author?.name || "M")
                   .split(" ")
                   .map((p) => p[0])
@@ -293,10 +394,17 @@ export function PostFeed({ newPost }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const seenIds = useRef(new Set());
+  const pageRef = useRef(1);
+  const hasMoreRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const [sentinelEl, setSentinelEl] = useState(null);
+
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
 
   const loadPosts = useCallback(async (pageNum = 1, append = false) => {
     try {
@@ -313,14 +421,41 @@ export function PostFeed({ newPost }) {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      loadingMoreRef.current = false;
     }
   }, []);
 
   // Initial load
   useEffect(() => {
     setLoading(true);
+    pageRef.current = 1;
     loadPosts(1);
   }, [loadPosts]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const nextPage = pageRef.current + 1;
+    pageRef.current = nextPage;
+    await loadPosts(nextPage, true);
+  }, [loadPosts]);
+
+  // Infinite scroll — fetch the next page a little before the sentinel actually
+  // reaches the viewport, so older posts are ready by the time the user gets there.
+  // sentinelEl is only rendered once posts exist, so this must react to the node
+  // showing up (a callback-ref-backed state) rather than run once on mount.
+  useEffect(() => {
+    if (!sentinelEl) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(sentinelEl);
+    return () => observer.disconnect();
+  }, [sentinelEl, loadMore]);
 
   // Periodic polling every 12 seconds to sync new posts from other accounts
   useEffect(() => {
@@ -376,22 +511,12 @@ export function PostFeed({ newPost }) {
     setPosts((prev) => prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)));
   }
 
-  async function loadMore() {
-    setLoadingMore(true);
-    const nextPage = page + 1;
-    setPage(nextPage);
-    await loadPosts(nextPage, true);
-  }
-
   if (loading) {
     return (
-      <div className="space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="h-32 animate-pulse rounded-3xl border border-border/60 bg-card/50"
-          />
-        ))}
+      <div className="space-y-4">
+        <PostSkeleton />
+        <PostSkeleton />
+        <PostSkeleton />
       </div>
     );
   }
@@ -443,20 +568,29 @@ export function PostFeed({ newPost }) {
         ))}
       </AnimatePresence>
 
-      {hasMore && (
-        <div className="flex justify-center pt-2">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="flex items-center gap-2 rounded-xl border border-border bg-card/80 px-5 py-2.5 text-sm font-bold hover:bg-secondary transition-colors disabled:opacity-50"
-          >
-            {loadingMore ? (
-              <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : null}
-            {loadingMore ? "Loading…" : "Load more posts"}
-          </button>
-        </div>
+      {hasMore ? (
+        <>
+          <AnimatePresence>
+            {loadingMore && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4"
+              >
+                <PostSkeleton />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {/* Sentinel — entering the viewport (600px early) triggers the next page. */}
+          <div ref={setSentinelEl} aria-hidden="true" className="h-1 w-full" />
+        </>
+      ) : (
+        posts.length > 2 && (
+          <p className="pt-1 text-center text-xs font-medium text-muted-foreground">
+            You&apos;re all caught up ✨
+          </p>
+        )
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { POST_TYPES } from "../utils/enums.js";
 
 const commentSchema = new mongoose.Schema(
   {
@@ -9,7 +10,7 @@ const commentSchema = new mongoose.Schema(
     },
     authorRole: {
       type: String,
-      required: true,
+      default: "founder",
       trim: true,
     },
     content: {
@@ -32,16 +33,33 @@ const postSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    authorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
     authorRole: {
       type: String,
-      required: true,
+      default: "founder",
       trim: true,
+    },
+    type: {
+      type: String,
+      enum: Object.values(POST_TYPES),
+      default: POST_TYPES.TEXT,
+      index: true,
     },
     content: {
       type: String,
       required: [true, "Post content is required."],
       trim: true,
       maxlength: [2000, "Post cannot exceed 2000 characters."],
+    },
+    startupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Startup",
+      default: null,
+      index: true,
     },
     mediaUrls: {
       type: [String],
@@ -52,9 +70,21 @@ const postSchema = new mongoose.Schema(
       ref: "User",
       default: [],
     },
+    likesCount: {
+      type: Number,
+      default: 0,
+    },
     comments: {
       type: [commentSchema],
       default: [],
+    },
+    commentsCount: {
+      type: Number,
+      default: 0,
+    },
+    commentCount: {
+      type: Number,
+      default: 0,
     },
     tags: {
       type: [String],
@@ -66,7 +96,22 @@ const postSchema = new mongoose.Schema(
   },
 );
 
-// Index for feed queries (newest first)
+postSchema.pre("save", function () {
+  if (!this.authorId && this.author) {
+    this.authorId = this.author;
+  }
+  if (!this.author && this.authorId) {
+    this.author = this.authorId;
+  }
+  if (this.likes) {
+    this.likesCount = this.likes.length;
+  }
+  if (this.comments) {
+    this.commentsCount = this.comments.length;
+    this.commentCount = this.comments.length;
+  }
+});
+
 postSchema.index({ createdAt: -1 });
 
 const Post = mongoose.models.Post || mongoose.model("Post", postSchema);

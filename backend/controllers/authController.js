@@ -1,9 +1,9 @@
-import User from "../models/User.js";
 import { OAuth2Client } from "google-auth-library";
 import { env } from "../config/env.js";
+import User from "../models/User.js";
 import { USER_ROLE_VALUES } from "../utils/enums.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
-import { createAuthToken, getUserIdFromToken } from "../utils/token.js";
+import { createAuthToken } from "../utils/token.js";
 
 export async function login(req, res, next) {
   try {
@@ -29,16 +29,20 @@ export async function login(req, res, next) {
 
 export async function signup(req, res, next) {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, roles: rawRoles } = req.body;
 
-    if (!name || !email || !password || !role) {
+    const primaryRole = role || (Array.isArray(rawRoles) ? rawRoles[0] : null);
+
+    if (!name || !email || !password || !primaryRole) {
       return res.status(400).json({
         success: false,
         error: "Name, email, password, and role are required.",
       });
     }
 
-    if (!USER_ROLE_VALUES.includes(role)) {
+    const roles = Array.isArray(rawRoles) && rawRoles.length > 0 ? rawRoles : [primaryRole];
+
+    if (roles.some((r) => !USER_ROLE_VALUES.includes(r))) {
       return res.status(400).json({ success: false, error: "Invalid account role." });
     }
 
@@ -56,8 +60,9 @@ export async function signup(req, res, next) {
       name: String(name).trim(),
       email: normalizedEmail,
       passwordHash: hashPassword(password),
-      role,
-      roles: [role],
+      role: primaryRole,
+      roles,
+      activeRole: primaryRole,
       authProviders: ["local"],
       onboardingComplete: true,
     });
@@ -114,6 +119,7 @@ export async function googleAuth(req, res, next) {
 
     if (user) {
       user.googleSubject = payload.sub;
+      user.googleId = user.googleId || payload.sub;
       user.avatarUrl = user.avatarUrl || payload.picture || "";
       user.authProviders = [...new Set([...(user.authProviders || []), "google"])];
       await user.save();
@@ -122,10 +128,12 @@ export async function googleAuth(req, res, next) {
         name: String(payload.name || email.split("@")[0]).trim(),
         email,
         googleSubject: payload.sub,
+        googleId: payload.sub,
         avatarUrl: payload.picture || "",
         authProviders: ["google"],
-        roles: [],
-        role: USER_ROLE_VALUES[0],
+        roles: ["founder"],
+        role: "founder",
+        activeRole: "founder",
         onboardingComplete: false,
       });
     }
@@ -136,15 +144,13 @@ export async function googleAuth(req, res, next) {
   }
 }
 
+export async function logout(req, res) {
+  res.clearCookie("nexventure.sid");
+  return res.json({ success: true, data: null });
+}
+
 export async function completeOnboarding(req, res, next) {
   try {
-    const token = getBearerToken(req.headers.authorization);
-    const userId = getUserIdFromToken(token);
-
-    if (!userId) {
-      return res.status(401).json({ success: false, error: "Invalid or missing auth token." });
-    }
-
     const roles = Array.isArray(req.body.roles) ? [...new Set(req.body.roles)] : [];
     if (!roles.length || roles.some((role) => !USER_ROLE_VALUES.includes(role))) {
       return res.status(400).json({
@@ -153,11 +159,18 @@ export async function completeOnboarding(req, res, next) {
       });
     }
 
+    const requestedActiveRole = USER_ROLE_VALUES.includes(req.body.activeRole)
+      ? req.body.activeRole
+      : null;
+    const activeRole =
+      requestedActiveRole && roles.includes(requestedActiveRole) ? requestedActiveRole : roles[0];
+
     const user = await User.findByIdAndUpdate(
-      userId,
+      req.userId,
       {
-        role: roles[0],
+        role: activeRole,
         roles,
+        activeRole,
         onboardingComplete: true,
         headline: String(req.body.headline || "")
           .trim()
@@ -173,7 +186,7 @@ export async function completeOnboarding(req, res, next) {
       return res.status(404).json({ success: false, error: "Account not found." });
     }
 
-    return res.json({ success: true, user: toAuthUser(user) });
+    return res.json({ success: true, user: toAuthUser(user), data: toAuthUser(user) });
   } catch (error) {
     return next(error);
   }
@@ -198,20 +211,13 @@ export async function resetPassword(req, res, next) {
 
 export async function getCurrentUser(req, res, next) {
   try {
-    const token = getBearerToken(req.headers.authorization);
-    const userId = getUserIdFromToken(token);
-
-    if (!userId) {
-      return res.status(401).json({ success: false, error: "Invalid or missing auth token." });
-    }
-
-    const user = await User.findById(userId).exec();
+    const user = req.currentUser || (await User.findById(req.userId).exec());
 
     if (!user) {
       return res.status(401).json({ success: false, error: "Invalid or expired session." });
     }
 
-    return res.json({ success: true, user: toAuthUser(user) });
+    return res.json({ success: true, user: toAuthUser(user), data: toAuthUser(user) });
   } catch (error) {
     return next(error);
   }
@@ -222,21 +228,25 @@ function sendAuthResponse(res, statusCode, user) {
     success: true,
     token: createAuthToken(user._id.toString()),
     user: toAuthUser(user),
+    data: toAuthUser(user),
   });
 }
 
 function toAuthUser(user) {
+  const activeRole = user.activeRole || user.role || "founder";
   return {
     id: user._id.toString(),
+    _id: user._id.toString(),
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: activeRole,
+    activeRole,
     roles:
       user.onboardingComplete === false
         ? user.roles || []
         : user.roles?.length
           ? user.roles
-          : [user.role],
+          : [user.role || "founder"],
     onboardingComplete: user.onboardingComplete !== false,
     headline: user.headline || "",
     bio: user.bio || "",
@@ -245,15 +255,11 @@ function toAuthUser(user) {
     skills: user.skills || [],
     interests: user.interests || [],
     linkedStartupId: user.linkedStartupId || null,
+    isAdmin: Boolean(user.isAdmin),
     authProviders: user.authProviders || ["local"],
   };
 }
 
 function normalizeEmail(email) {
   return String(email).trim().toLowerCase();
-}
-
-function getBearerToken(authorizationHeader) {
-  if (!authorizationHeader?.startsWith("Bearer ")) return null;
-  return authorizationHeader.slice("Bearer ".length);
 }

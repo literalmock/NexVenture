@@ -4,6 +4,7 @@ import {
   fetchCurrentUser,
   googleAuthUser,
   loginUser,
+  logoutUser,
   signupUser,
 } from "./api/authClient";
 import { AUTH_TOKEN_KEY } from "./api/authClient";
@@ -109,6 +110,11 @@ export function AuthProvider({ children }) {
     }
   }, []);
   const signOut = useCallback(() => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      logoutUser(token).catch(() => {});
+    }
+
     setUser(null);
     setError(null);
     localStorage.removeItem(TOKEN_KEY);

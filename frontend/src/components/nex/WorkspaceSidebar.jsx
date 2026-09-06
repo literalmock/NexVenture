@@ -5,6 +5,7 @@ import {
   FiGrid,
   FiLogOut,
   FiMessageSquare,
+  FiMessageCircle,
   FiSettings,
   FiTrendingUp,
   FiBriefcase,
@@ -25,8 +26,13 @@ const NAV_BY_ROLE = {
   founder: [
     { label: "Dashboard", icon: FiGrid, to: "/dashboard" },
     { label: "Explore", icon: FiCompass, to: "/explore" },
+    { label: "Community", icon: FiMessageCircle, to: "/community" },
     { label: "My Startup", icon: FiBriefcase, to: "/workspace/startup" },
+    { label: "Pitch", icon: FiFileText, to: "/workspace/pitch" },
     { label: "Investors", icon: FiTrendingUp, to: "/workspace/investors" },
+    { label: "Mentors", icon: FiUsers, to: "/workspace/mentors" },
+    { label: "Opportunities", icon: FiAward, to: "/workspace/opportunities" },
+    { label: "Analytics", icon: FiPieChart, to: "/workspace/analytics" },
     { label: "Events", icon: FiCalendar, to: "/workspace/events" },
     { label: "Messages", icon: FiMessageSquare, to: "/workspace/messages" },
     { label: "Bookmarks", icon: FiBookmark, to: "/workspace/bookmarks" },
@@ -35,6 +41,7 @@ const NAV_BY_ROLE = {
   investor: [
     { label: "Dashboard", icon: FiGrid, to: "/dashboard" },
     { label: "Explore", icon: FiCompass, to: "/explore" },
+    { label: "Community", icon: FiMessageCircle, to: "/community" },
     { label: "Deal Flow", icon: FiDollarSign, to: "/workspace/investors" },
     { label: "Portfolio", icon: FiPieChart, to: "/workspace/bookmarks" },
     { label: "Events", icon: FiCalendar, to: "/workspace/events" },
@@ -44,7 +51,8 @@ const NAV_BY_ROLE = {
   mentor: [
     { label: "Dashboard", icon: FiGrid, to: "/dashboard" },
     { label: "Explore", icon: FiCompass, to: "/explore" },
-    { label: "My Mentees", icon: FiUsers, to: "/workspace/startup" },
+    { label: "Community", icon: FiMessageCircle, to: "/community" },
+    { label: "Mentorship", icon: FiUsers, to: "/workspace/mentors" },
     { label: "Sessions", icon: FiCalendar, to: "/workspace/events" },
     { label: "Resources", icon: FiFileText, to: "/workspace/bookmarks" },
     { label: "Messages", icon: FiMessageSquare, to: "/workspace/messages" },
@@ -53,8 +61,9 @@ const NAV_BY_ROLE = {
   student: [
     { label: "Dashboard", icon: FiGrid, to: "/dashboard" },
     { label: "Explore", icon: FiCompass, to: "/explore" },
-    { label: "Opportunities", icon: FiAward, to: "/workspace/investors" },
-    { label: "Applications", icon: FiFileText, to: "/workspace/bookmarks" },
+    { label: "Community", icon: FiMessageCircle, to: "/community" },
+    { label: "Opportunities", icon: FiAward, to: "/workspace/opportunities" },
+    { label: "Applications", icon: FiFileText, to: "/workspace/applications" },
     { label: "Events", icon: FiCalendar, to: "/workspace/events" },
     { label: "Messages", icon: FiMessageSquare, to: "/workspace/messages" },
     { label: "Settings", icon: FiSettings, to: "/workspace/settings" },
@@ -66,8 +75,9 @@ export function WorkspaceSidebar({ open, onClose }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
-  const navItems = NAV_BY_ROLE[user?.role] ?? NAV_BY_ROLE.founder;
-  const badge = USER_ROLE_BADGES[user?.role] ?? "Member";
+  const activeRole = user?.activeRole || user?.role;
+  const navItems = NAV_BY_ROLE[activeRole] ?? NAV_BY_ROLE.founder;
+  const badge = USER_ROLE_BADGES[activeRole] ?? "Member";
   const initials = (user?.name ?? "N")
     .split(" ")
     .map((p) => p[0])

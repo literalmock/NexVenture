@@ -31,6 +31,17 @@ export function getPostsByUser(userId, page = 1) {
 }
 
 /**
+ * Fetch an older window of a post's comments (public).
+ * `before` is how many comments are already loaded on the client (counted
+ * from the most recent), so the server can return the window just before them.
+ */
+export function getPostComments(postId, { before = 0, limit = 10 } = {}) {
+  return request(`/posts/${postId}/comments?before=${before}&limit=${limit}`, {
+    token: getToken(),
+  });
+}
+
+/**
  * Toggle like on a post (auth required)
  */
 export function likePost(postId) {

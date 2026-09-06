@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { FiSend, FiImage, FiX } from "react-icons/fi";
+import { FiSend, FiX } from "react-icons/fi";
+import { createPost } from "@/lib/api/postClient";
 import { useAuth } from "@/lib/auth";
 import { USER_ROLE_BADGES } from "@/utils/enums";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,9 @@ export function PostComposer({ onPostCreated }) {
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const activeRole = user?.activeRole || user?.role;
 
-  const placeholder = ROLE_PLACEHOLDERS[user?.role] ?? "What's on your mind?";
+  const placeholder = ROLE_PLACEHOLDERS[activeRole] ?? "What's on your mind?";
   const initials = (user?.name ?? "N")
     .split(" ")
     .map((p) => p[0])
@@ -32,7 +34,6 @@ export function PostComposer({ onPostCreated }) {
     setError(null);
 
     try {
-      const { createPost } = await import("@/lib/api/postClient");
       const res = await createPost({ content: content.trim() });
       setContent("");
       if (onPostCreated) onPostCreated(res.post);
@@ -80,7 +81,7 @@ export function PostComposer({ onPostCreated }) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold">{user?.name}</span>
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-              {USER_ROLE_BADGES[user?.role] ?? "Member"}
+              {USER_ROLE_BADGES[activeRole] ?? "Member"}
             </span>
           </div>
 

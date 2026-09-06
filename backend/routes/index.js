@@ -1,18 +1,40 @@
 import { Router } from "express";
+import adminRoutes from "./adminRoutes.js";
+import applicationRoutes from "./applicationRoutes.js";
 import authRoutes from "./authRoutes.js";
+import connectionRoutes from "./connectionRoutes.js";
 import healthRoutes from "./healthRoutes.js";
+import investmentRoutes from "./investmentRoutes.js";
+import mentorRoutes from "./mentorRoutes.js";
+import mentorshipRoutes from "./mentorshipRoutes.js";
+import messageRoutes from "./messageRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
+import opportunityRoutes from "./opportunityRoutes.js";
+import pitchRoutes from "./pitchRoutes.js";
 import postRoutes from "./postRoutes.js";
+import profileRoutes from "./profileRoutes.js";
 import startupRoutes from "./startupRoutes.js";
+import userRoutes from "./userRoutes.js";
 import workspaceRoutes from "./workspaceRoutes.js";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
-router.use("/health", healthRoutes);
-router.use("/notifications", notificationRoutes);
-router.use("/posts", postRoutes);
+router.use("/users", userRoutes);
+router.use("/profiles", profileRoutes);
 router.use("/startups", startupRoutes);
+router.use("/pitches", pitchRoutes);
+router.use("/investments", investmentRoutes);
+router.use("/mentors", mentorRoutes);
+router.use("/mentorships", mentorshipRoutes);
+router.use("/opportunities", opportunityRoutes);
+router.use("/applications", applicationRoutes);
+router.use("/connections", connectionRoutes);
+router.use("/conversations", messageRoutes);
+router.use("/posts", postRoutes);
+router.use("/notifications", notificationRoutes);
+router.use("/admin", adminRoutes);
+router.use("/health", healthRoutes);
 router.use("/workspace", workspaceRoutes);
 
 export default router;

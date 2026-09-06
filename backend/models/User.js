@@ -1,34 +1,6 @@
 import mongoose from "mongoose";
 import { USER_ROLES, USER_ROLE_VALUES } from "../utils/enums.js";
 
-const workspaceSchema = new mongoose.Schema(
-  {
-    startupProfile: {
-      name: { type: String, trim: true, maxlength: 80, default: "" },
-      tagline: { type: String, trim: true, maxlength: 180, default: "" },
-      stage: { type: String, trim: true, maxlength: 40, default: "Pre-seed" },
-      website: { type: String, trim: true, maxlength: 200, default: "" },
-    },
-    investorConnections: { type: [String], default: [] },
-    eventRsvps: { type: [String], default: [] },
-    bookmarkedStartupIds: { type: [String], default: [] },
-    messages: {
-      type: [
-        new mongoose.Schema(
-          {
-            threadId: { type: String, required: true },
-            body: { type: String, required: true, maxlength: 1000 },
-            sentAt: { type: Date, default: Date.now },
-          },
-          { _id: true },
-        ),
-      ],
-      default: [],
-    },
-  },
-  { _id: false },
-);
-
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -53,29 +25,35 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       select: false,
     },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     authProviders: {
       type: [String],
       enum: ["local", "google"],
       default: ["local"],
+    },
+    roles: {
+      type: [String],
+      enum: USER_ROLE_VALUES,
+      default: [USER_ROLES.FOUNDER],
+      index: true,
+    },
+    activeRole: {
+      type: String,
+      enum: USER_ROLE_VALUES,
+      default: USER_ROLES.FOUNDER,
     },
     role: {
       type: String,
       enum: USER_ROLE_VALUES,
       default: USER_ROLES.FOUNDER,
     },
-    roles: {
-      type: [String],
-      enum: USER_ROLE_VALUES,
-      default: [USER_ROLES.FOUNDER],
-    },
-    onboardingComplete: {
-      type: Boolean,
-      default: true,
-    },
-    headline: {
+    avatarUrl: {
       type: String,
       trim: true,
-      maxlength: 120,
       default: "",
     },
     bio: {
@@ -84,15 +62,16 @@ const userSchema = new mongoose.Schema(
       maxlength: 500,
       default: "",
     },
+    headline: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+      default: "",
+    },
     location: {
       type: String,
       trim: true,
       maxlength: 80,
-      default: "",
-    },
-    avatarUrl: {
-      type: String,
-      trim: true,
       default: "",
     },
     skills: {
@@ -103,13 +82,24 @@ const userSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
-    // For founders — links to their startup in the Startup collection
+    onboardingComplete: {
+      type: Boolean,
+      default: true,
+    },
     linkedStartupId: {
       type: String,
       default: null,
     },
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+    isSuspended: {
+      type: Boolean,
+      default: false,
+    },
     workspace: {
-      type: workspaceSchema,
+      type: mongoose.Schema.Types.Mixed,
       default: () => ({}),
     },
   },
@@ -117,6 +107,16 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+userSchema.pre("save", function () {
+  if (!this.roles || this.roles.length === 0) {
+    this.roles = [this.role || USER_ROLES.FOUNDER];
+  }
+  if (!this.activeRole) {
+    this.activeRole = this.roles[0];
+  }
+  this.role = this.activeRole;
+});
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 

@@ -57,7 +57,7 @@ const ROLE_CONFIG = {
         label: "Update Pitch Deck",
         icon: FiBookOpen,
         color: "bg-violet-500/10 text-violet-400",
-        to: "/workspace/startup",
+        to: "/workspace/pitch",
       },
       {
         label: "Connect Investors",
@@ -65,7 +65,12 @@ const ROLE_CONFIG = {
         color: "bg-emerald-500/10 text-emerald-400",
         to: "/workspace/investors",
       },
-      { label: "Post Update", icon: FiZap, color: "bg-blue-500/10 text-blue-400", action: "post" },
+      {
+        label: "Review Applicants",
+        icon: FiUsers,
+        color: "bg-blue-500/10 text-blue-400",
+        to: "/workspace/opportunities",
+      },
     ],
   },
   investor: {
@@ -112,25 +117,25 @@ const ROLE_CONFIG = {
         label: "Review Requests",
         icon: FiUserCheck,
         color: "bg-emerald-500/10 text-emerald-400",
-        to: "/workspace/messages",
+        to: "/workspace/mentors",
       },
     ],
   },
   student: {
     headline: "Your career & startup launchpad",
-    summary: "Hiring startups, internship applications, and mentor connections.",
+    summary: "Startup projects, application status, and accepted founder conversations.",
     quickActions: [
       {
-        label: "Explore Startups",
+        label: "Find Projects",
         icon: FiAward,
         color: "bg-blue-500/10 text-blue-400",
-        to: "/startups",
+        to: "/workspace/opportunities",
       },
       {
-        label: "Events & RSVPs",
-        icon: FiCalendar,
+        label: "Applications",
+        icon: FiFileText,
         color: "bg-amber-500/10 text-amber-400",
-        to: "/workspace/events",
+        to: "/workspace/applications",
       },
       {
         label: "Share Update",
@@ -225,7 +230,7 @@ function DashboardPage() {
   const [liveStats, setLiveStats] = useState(null);
   const [rsvpdEvents, setRsvpdEvents] = useState(user?.workspace?.eventRsvps || []);
 
-  const role = user?.role ?? "founder";
+  const role = user?.activeRole || user?.role || "founder";
   const cfg = ROLE_CONFIG[role] ?? ROLE_CONFIG.founder;
 
   const loadStats = useCallback(async () => {
@@ -511,7 +516,16 @@ function DashboardPage() {
 
             {/* Post Composer + Feed — full width */}
             <div className="space-y-4 lg:col-span-3">
-              <p className="font-display text-sm font-bold px-1">Community Feed</p>
+              <div className="flex items-center justify-between px-1">
+                <p className="font-display text-sm font-bold">Community Feed</p>
+                <button
+                  type="button"
+                  onClick={() => navigate({ to: "/community" })}
+                  className="text-xs font-semibold text-primary hover:underline"
+                >
+                  Open full feed →
+                </button>
+              </div>
               <PostComposer
                 onPostCreated={(post) => {
                   setLatestPost(post);

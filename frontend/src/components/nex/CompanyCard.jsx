@@ -18,16 +18,17 @@ export function CompanyCard({ company, saved, onSave, index, onRequestSent }) {
   const { user } = useAuth();
   const [requestStatus, setRequestStatus] = useState(null); // 'sending' | 'sent' | 'error'
   const [requestMsg, setRequestMsg] = useState("");
+  const activeRole = user?.activeRole || user?.role;
 
   async function handleSendRequest() {
     if (!user) return;
     setRequestStatus("sending");
     try {
-      const type = company.hiring && user.role === "student" ? "application" : "intro_request";
+      const type = company.hiring && activeRole === "student" ? "application" : "intro_request";
       await sendIntroRequest({
         startupId: company.id,
         type,
-        message: `${user.name} (${user.role}) requested an introduction to ${company.name}.`,
+        message: `${user.name} (${activeRole}) requested an introduction to ${company.name}.`,
       });
       setRequestStatus("sent");
       if (onRequestSent) onRequestSent(company.id);
@@ -142,7 +143,7 @@ export function CompanyCard({ company, saved, onSave, index, onRequestSent }) {
               ) : (
                 <>
                   <FiSend className="size-3" />{" "}
-                  {company.hiring && user.role === "student" ? "Apply" : "Request Intro"}
+                  {company.hiring && activeRole === "student" ? "Apply" : "Request Intro"}
                 </>
               )}
             </button>

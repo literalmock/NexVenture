@@ -5,6 +5,7 @@ import { Route as AuthenticatedRouteRouteImport } from "./routes/_authenticated/
 import { Route as LoginRouteImport } from "./routes/login";
 import { Route as SignupRouteImport } from "./routes/signup";
 import { Route as StartupsRouteImport } from "./routes/startups";
+import { Route as AuthenticatedCommunityRouteImport } from "./routes/_authenticated/community";
 import { Route as AuthenticatedDashboardRouteImport } from "./routes/_authenticated/dashboard";
 import { Route as AuthenticatedExploreRouteImport } from "./routes/_authenticated/explore";
 import { Route as AuthenticatedOnboardingRouteImport } from "./routes/_authenticated/onboarding";
@@ -39,6 +40,12 @@ const StartupsRoute = StartupsRouteImport.update({
   getParentRoute: () => rootRouteImport,
 });
 
+const AuthenticatedCommunityRoute = AuthenticatedCommunityRouteImport.update({
+  id: "/community",
+  path: "/community",
+  getParentRoute: () => AuthenticatedRouteRoute,
+});
+
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: "/dashboard",
   path: "/dashboard",
@@ -64,6 +71,7 @@ const AuthenticatedWorkspaceRoute = AuthenticatedWorkspaceRouteImport.update({
 });
 
 const AuthenticatedRouteRouteWithChildren = AuthenticatedRouteRoute._addFileChildren({
+  AuthenticatedCommunityRoute,
   AuthenticatedDashboardRoute,
   AuthenticatedExploreRoute,
   AuthenticatedOnboardingRoute,

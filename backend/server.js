@@ -1,60 +1,74 @@
-import cors from "cors";
-import express from "express";
+import { fileURLToPath } from "node:url";
+import { createApp, runStartupTasks } from "./app.js";
 import { connectDB } from "./config/db.js";
 import { env } from "./config/env.js";
-import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import apiRoutes from "./routes/index.js";
+import { attachMessageSocket } from "./realtime/messageSocket.js";
 
-const app = express();
-const allowedOrigins = new Set([
-  env.CLIENT_ORIGIN,
-  ...(env.NODE_ENV === "development"
-    ? [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-      ]
-    : []),
-]);
+const app = createApp();
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (
-        !origin ||
-        allowedOrigins.has(origin) ||
-        (env.NODE_ENV === "development" &&
-          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
-      ) {
-        return callback(null, true);
-      }
-      return callback(null, false);
-    },
-    credentials: true,
-  }),
-);
-app.use(express.json());
+let serverInstance = null;
+let messageSocket = null;
 
-app.use(env.API_PREFIX, apiRoutes);
-app.use(notFoundHandler);
-app.use(errorHandler);
+export async function ensureServer({ port = env.PORT, host = "0.0.0.0" } = {}) {
+  await connectDB();
+  await runStartupTasks();
 
-async function startServer() {
-  try {
-    await connectDB();
-    app.listen(env.PORT, "0.0.0.0", () => {
-      console.log(`NEXVENTURE API running at http://localhost:${env.PORT}${env.API_PREFIX}`);
-      console.log(`Health check: http://localhost:${env.PORT}${env.API_PREFIX}/health`);
+  if (!serverInstance) {
+    serverInstance = await new Promise((resolve, reject) => {
+      const server = app.listen(port, host, () => {
+        server.off("error", reject);
+        resolve(server);
+      });
+
+      server.on("error", reject);
     });
-  } catch (error) {
-    console.error("Failed to start backend:", error.message);
-    process.exit(1);
+    messageSocket = attachMessageSocket(serverInstance);
   }
+
+  return serverInstance;
 }
 
-startServer();
+export async function closeServer() {
+  if (!serverInstance) return;
+
+  if (messageSocket) {
+    await messageSocket.close();
+    messageSocket = null;
+  }
+
+  await new Promise((resolve, reject) => {
+    serverInstance.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  serverInstance = null;
+}
+
+async function start() {
+  await ensureServer();
+  console.log(`API listening on port ${env.PORT}`);
+}
+
+async function stop() {
+  await closeServer();
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  start().catch((err) => {
+    if (err.code !== "EADDRINUSE") {
+      console.error("Server start error:", err.message);
+      process.exitCode = 1;
+    }
+  });
+
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
 
 export default app;

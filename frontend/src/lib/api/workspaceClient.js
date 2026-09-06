@@ -1,4 +1,4 @@
-import { AUTH_TOKEN_KEY, request } from "./authClient";
+import { AUTH_TOKEN_KEY, request } from "./authClient.js";
 
 function getToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);

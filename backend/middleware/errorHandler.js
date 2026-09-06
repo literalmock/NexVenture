@@ -9,17 +9,33 @@ export function errorHandler(error, req, res, next) {
   void req;
   void next;
 
-  if (error.code === 11000) {
-    return res.status(409).json({
+  if (error.statusCode) {
+    return res.status(error.statusCode).json({
       success: false,
-      error: "A record with this value already exists.",
+      error: {
+        code: error.code || "REQUEST_ERROR",
+        message: error.message,
+      },
     });
   }
 
-  console.error(error);
+  if (error.code === 11000) {
+    return res.status(409).json({
+      success: false,
+      error: {
+        code: "DUPLICATE_RECORD",
+        message: "A record with this value already exists.",
+      },
+    });
+  }
+
+  console.error("Backend Error:", error);
 
   return res.status(500).json({
     success: false,
-    error: "Internal server error.",
+    error: {
+      code: "INTERNAL_SERVER_ERROR",
+      message: error.message || "Internal server error.",
+    },
   });
 }

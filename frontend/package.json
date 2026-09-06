@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../node_modules/vite/bin/vite.js --host 0.0.0.0 --port 8080",
+    "dev": "node ../node_modules/vite/bin/vite.js --host 0.0.0.0 --port 8082",
     "build": "node ../node_modules/vite/bin/vite.js build",
-    "preview": "node ../node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 8080"
+    "preview": "node ../node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 8082"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

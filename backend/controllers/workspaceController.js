@@ -25,11 +25,10 @@ export async function getWorkspaceStats(req, res, next) {
     const userId = user._id;
     const role = user.role || "founder";
 
-    // Common counts
     const [
       totalStartups,
       hiringStartups,
-      userPosts,
+      postStats,
       incomingRequests,
       pendingRequests,
       outgoingRequests,
@@ -38,7 +37,7 @@ export async function getWorkspaceStats(req, res, next) {
     ] = await Promise.all([
       Startup.countDocuments(),
       Startup.countDocuments({ hiring: true }),
-      Post.find({ author: userId }).exec(),
+      getUserPostStats(userId),
       Notification.countDocuments({ recipient: userId }),
       Notification.countDocuments({ recipient: userId, status: "pending" }),
       Notification.countDocuments({ sender: userId }),
@@ -55,12 +54,14 @@ export async function getWorkspaceStats(req, res, next) {
         .exec(),
     ]);
 
-    const totalLikesReceived = userPosts.reduce((acc, p) => acc + (p.likes?.length || 0), 0);
-    const totalCommentsReceived = userPosts.reduce((acc, p) => acc + (p.comments?.length || 0), 0);
+    const userPostsCount = postStats.postsCount;
+    const totalLikesReceived = postStats.likesCount;
+    const totalCommentsReceived = postStats.commentCount;
 
-    const rsvpsCount = user.workspace?.eventRsvps?.length || 0;
-    const bookmarkedCount = user.workspace?.bookmarkedStartupIds?.length || 0;
-    const investorConnectionsCount = user.workspace?.investorConnections?.length || 0;
+    const currentWs = user.workspace || {};
+    const rsvpsCount = currentWs.eventRsvps?.length || 0;
+    const bookmarkedCount = currentWs.bookmarkedStartupIds?.length || 0;
+    const investorConnectionsCount = currentWs.investorConnections?.length || 0;
 
     let metrics = [];
 
@@ -96,8 +97,8 @@ export async function getWorkspaceStats(req, res, next) {
         },
         {
           label: "Ecosystem reach",
-          value: `${Math.min(98, 45 + approvedRequests * 10 + userPosts.length * 8)}%`,
-          signal: userPosts.length > 0 ? `${userPosts.length} posts` : "Growing",
+          value: `${Math.min(98, 45 + approvedRequests * 10 + userPostsCount * 8)}%`,
+          signal: userPostsCount > 0 ? `${userPostsCount} posts` : "Growing",
           type: "progress",
         },
       ];
@@ -160,13 +161,12 @@ export async function getWorkspaceStats(req, res, next) {
         },
         {
           label: "Community signals",
-          value: String(userPosts.length + totalCommentsReceived),
+          value: String(userPostsCount + totalCommentsReceived),
           signal: totalLikesReceived > 0 ? `+${totalLikesReceived} likes` : "Active",
           type: "hours",
         },
       ];
     } else {
-      // Student
       const studentApps = await Notification.countDocuments({
         sender: userId,
         type: "application",
@@ -212,7 +212,7 @@ export async function getWorkspaceStats(req, res, next) {
         unreadNotifications: recentNotifications.filter((n) => !n.read).length,
         pendingRequests,
         approvedRequests,
-        userPostsCount: userPosts.length,
+        userPostsCount,
       },
       recentNotifications: recentNotifications.map((n) => ({
         id: n._id.toString(),
@@ -234,9 +234,12 @@ export async function updateWorkspace(req, res, next) {
     const user = await getAuthenticatedUser(req);
     if (!user) return unauthorized(res);
 
+    const currentWs = user.workspace || {};
+    const baseWs = currentWs.toObject ? currentWs.toObject() : { ...currentWs };
+
     const { field, value } = req.body;
     if (field === "startupProfile") {
-      user.workspace.startupProfile = {
+      baseWs.startupProfile = {
         name: clean(value?.name, 80),
         tagline: clean(value?.tagline, 180),
         stage: clean(value?.stage, 40) || "Pre-seed",
@@ -246,26 +249,64 @@ export async function updateWorkspace(req, res, next) {
       if (!Array.isArray(value)) {
         return res.status(400).json({ success: false, error: `${field} must be an array.` });
       }
-      user.workspace[field] = [
-        ...new Set(value.map((item) => clean(item, 120)).filter(Boolean)),
-      ].slice(0, 100);
+      baseWs[field] = [...new Set(value.map((item) => clean(item, 120)).filter(Boolean))].slice(
+        0,
+        100,
+      );
     } else if (field === "message") {
       const threadId = clean(value?.threadId, 120);
       const body = clean(value?.body, 1000);
       if (!threadId || !body) {
         return res.status(400).json({ success: false, error: "Thread and message are required." });
       }
-      user.workspace.messages.push({ threadId, body, sentAt: new Date() });
-      if (user.workspace.messages.length > 100) user.workspace.messages.splice(0, 1);
+      const messages = Array.isArray(baseWs.messages) ? [...baseWs.messages] : [];
+      messages.push({ threadId, body, sentAt: new Date() });
+      if (messages.length > 100) messages.splice(0, 1);
+      baseWs.messages = messages;
     } else {
       return res.status(400).json({ success: false, error: "Unsupported workspace update." });
     }
 
+    user.workspace = baseWs;
+    user.markModified("workspace");
     await user.save();
     return res.json({ success: true, workspace: serializeWorkspace(user.workspace) });
   } catch (error) {
     return next(error);
   }
+}
+
+async function getUserPostStats(userId) {
+  const [stats] = await Post.aggregate([
+    { $match: { author: userId } },
+    {
+      $group: {
+        _id: null,
+        postsCount: { $sum: 1 },
+        likesCount: {
+          $sum: {
+            $ifNull: ["$likesCount", { $size: { $ifNull: ["$likes", []] } }],
+          },
+        },
+        commentCount: {
+          $sum: {
+            $ifNull: [
+              "$commentCount",
+              {
+                $ifNull: ["$commentsCount", { $size: { $ifNull: ["$comments", []] } }],
+              },
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  return {
+    postsCount: stats?.postsCount || 0,
+    likesCount: stats?.likesCount || 0,
+    commentCount: stats?.commentCount || 0,
+  };
 }
 
 async function getAuthenticatedUser(req) {
