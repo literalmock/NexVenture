@@ -8,7 +8,10 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 5;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_MULTIPART_BYTES = MAX_ATTACHMENTS_PER_MESSAGE * MAX_ATTACHMENT_BYTES + 128 * 1024;
 
-const UPLOAD_ROOT = fileURLToPath(new URL("../uploads/", import.meta.url));
+const DEFAULT_UPLOAD_ROOT = process.env.VERCEL
+  ? path.join("/tmp", "nexventure-uploads")
+  : fileURLToPath(new URL("../uploads/", import.meta.url));
+const UPLOAD_ROOT = process.env.UPLOAD_DIR || DEFAULT_UPLOAD_ROOT;
 const MESSAGE_UPLOAD_ROOT = path.join(UPLOAD_ROOT, "messages");
 
 const ALLOWED_ATTACHMENT_TYPES = new Set([

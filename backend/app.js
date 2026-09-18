@@ -1,9 +1,12 @@
 import cors from "cors";
 import express from "express";
+import mongoose from "mongoose";
+import { connectDB } from "./config/db.js";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import Post from "./models/Post.js";
 import apiRoutes from "./routes/index.js";
+import healthRoutes from "./routes/healthRoutes.js";
 import { reconcileInvestmentInterestLifecycle } from "./services/investmentService.js";
 
 function buildAllowedOrigins() {
@@ -22,6 +25,41 @@ function buildAllowedOrigins() {
   ]);
 }
 
+function isOriginAllowed(origin, allowedOrigins) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+  if (origin.endsWith(".vercel.app")) return true;
+  if (
+    env.NODE_ENV === "development" &&
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+let startupTasksPromise = null;
+let dbConnectPromise = null;
+
+export async function ensureDbAndStartupTasks() {
+  if (mongoose.connection.readyState !== 1) {
+    if (!dbConnectPromise) {
+      dbConnectPromise = connectDB().finally(() => {
+        dbConnectPromise = null;
+      });
+    }
+    await dbConnectPromise;
+  }
+
+  if (!startupTasksPromise) {
+    startupTasksPromise = runStartupTasks().catch((err) => {
+      console.error("Startup tasks error:", err);
+      startupTasksPromise = null;
+    });
+  }
+  return startupTasksPromise;
+}
+
 export function createApp() {
   const app = express();
   const allowedOrigins = buildAllowedOrigins();
@@ -29,15 +67,9 @@ export function createApp() {
   app.use(
     cors({
       origin(origin, callback) {
-        if (
-          !origin ||
-          allowedOrigins.has(origin) ||
-          (env.NODE_ENV === "development" &&
-            /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
-        ) {
+        if (isOriginAllowed(origin, allowedOrigins)) {
           return callback(null, true);
         }
-
         return callback(null, false);
       },
       credentials: true,
@@ -45,6 +77,20 @@ export function createApp() {
   );
   app.use(express.json());
 
+  // Automatically connect to DB and run startup tasks on demand (for serverless / Vercel lifecycle)
+  app.use(async (req, res, next) => {
+    try {
+      await ensureDbAndStartupTasks();
+      next();
+    } catch (error) {
+      if (req.path === "/health" || req.path.endsWith("/health")) {
+        return next();
+      }
+      next(error);
+    }
+  });
+
+  app.use("/health", healthRoutes);
   app.use(env.API_PREFIX, apiRoutes);
   app.use(notFoundHandler);
   app.use(errorHandler);

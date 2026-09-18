@@ -1,9 +1,9 @@
 export const AUTH_TOKEN_KEY = "nexventure.auth.token";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5050/api/v1").replace(
-  /\/+$/,
-  "",
-);
+const API_BASE = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "/api/v1" : "http://localhost:5050/api/v1")
+).replace(/\/+$/, "");
 
 export const API_BASE_URL = API_BASE;
 
