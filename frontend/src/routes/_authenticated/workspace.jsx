@@ -198,9 +198,10 @@ const PIPELINE_STATUS_LABELS = {
   full_time: "Full-time",
 };
 
-const ACTIVE_INVESTMENT_STATUSES = new Set(["pending", "accepted", "founder_review"]);
+const ACTIVE_INVESTMENT_STATUSES = new Set(["pending", "accepted", "approved", "founder_review"]);
 const INVESTMENT_INTEREST_STATUS_WEIGHT = {
   accepted: 4,
+  approved: 4,
   pending: 3,
   founder_review: 2,
   rejected: 1,
@@ -546,7 +547,7 @@ function pickInvestmentInterest(current, next) {
 }
 
 function investmentInterestActionLabel(status) {
-  if (status === "accepted") return "Accepted";
+  if (status === "accepted" || status === "approved") return "Accepted";
   if (status === "pending") return "Interest sent";
   if (status === "founder_review") return "Ignored";
   if (status === "rejected" || status === "withdrawn") return "Express again";
@@ -1374,9 +1375,8 @@ function InvestorDealFlowSection({ onOpenConversation }) {
 
   useEffect(() => {
     let active = true;
-    async function load() {
-      setStatus("loading");
-      setNotice("");
+    async function load(silent = false) {
+      if (!silent) setStatus("loading");
       try {
         const [startupResponse, interestResponse, dealRoomResponse] = await Promise.all([
           fetchStartups(),
@@ -1390,17 +1390,28 @@ function InvestorDealFlowSection({ onOpenConversation }) {
         setStartups(visibleStartups);
         setInterests(interestResponse.data || []);
         setDealRooms(dealRoomResponse.data || []);
-        setSelectedStartupId(visibleStartups[0] ? getStartupId(visibleStartups[0]) : "");
+        setSelectedStartupId((prev) => prev || (visibleStartups[0] ? getStartupId(visibleStartups[0]) : ""));
         setStatus("ready");
       } catch (error) {
         if (!active) return;
-        setNotice(error instanceof Error ? error.message : "Could not load deal flow.");
-        setStatus("error");
+        if (!silent) {
+          setNotice(error instanceof Error ? error.message : "Could not load deal flow.");
+          setStatus("error");
+        }
       }
     }
     load();
+
+    const handleSync = () => {
+      load(true);
+    };
+    window.addEventListener("nex:notifications_updated", handleSync);
+    const interval = setInterval(() => load(true), 8000);
+
     return () => {
       active = false;
+      window.removeEventListener("nex:notifications_updated", handleSync);
+      clearInterval(interval);
     };
   }, [currentUserId]);
 
@@ -1592,10 +1603,14 @@ function InvestorDealFlowSection({ onOpenConversation }) {
                     disabled={requestLocked}
                   />
                   <IconButton
-                    label={interest?.status === "accepted" ? "Open Deal Room" : "Await acceptance"}
+                    label={
+                      ["accepted", "approved"].includes(interest?.status)
+                        ? "Open Deal Room"
+                        : "Await acceptance"
+                    }
                     icon={FiMessageSquare}
                     onClick={() => openDealRoomChat(dealRoom, interest, startup)}
-                    disabled={interest?.status !== "accepted"}
+                    disabled={!["accepted", "approved"].includes(interest?.status)}
                   />
                 </div>
               </motion.article>
@@ -5705,6 +5720,7 @@ function IconButton({ label, icon: Icon, onClick, disabled }) {
 function StatusPill({ status }) {
   const tone = {
     accepted: "bg-success/10 text-success",
+    approved: "bg-success/10 text-success",
     published: "bg-success/10 text-success",
     open: "bg-success/10 text-success",
     completed: "bg-success/10 text-success",

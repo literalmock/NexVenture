@@ -3,6 +3,7 @@ import InvestmentInterest, {
   ACTIVE_INVESTMENT_INTEREST_STATUSES,
 } from "../models/InvestmentInterest.js";
 import Message from "../models/Message.js";
+import Pitch from "../models/Pitch.js";
 import Startup from "../models/Startup.js";
 import User from "../models/User.js";
 import { INVESTMENT_DEAL_STATUS, INVESTMENT_STATUS } from "../utils/enums.js";

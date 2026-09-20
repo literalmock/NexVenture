@@ -1,7 +1,15 @@
 import Notification from "../models/Notification.js";
 import Startup from "../models/Startup.js";
 import User from "../models/User.js";
-import { ACTIONABLE_REQUEST_TYPES } from "../services/notificationService.js";
+import InvestmentInterest from "../models/InvestmentInterest.js";
+import MentorshipRequest from "../models/MentorshipRequest.js";
+import Application from "../models/Application.js";
+import { ACTIONABLE_REQUEST_TYPES, createNotification } from "../services/notificationService.js";
+import * as investmentService from "../services/investmentService.js";
+import * as mentorService from "../services/mentorService.js";
+import * as applicationService from "../services/applicationService.js";
+import * as messageService from "../services/messageService.js";
+import { broadcastToUser } from "../realtime/messageSocket.js";
 
 /**
  * GET /notifications
@@ -181,27 +189,147 @@ export async function respondToRequest(req, res, next) {
     }
 
     const responder = await User.findById(req.userId).select("name role activeRole").exec();
-    const newStatus = action === "approve" ? "approved" : "rejected";
+    const isApprove = action === "approve";
+    const newStatus = isApprove ? "approved" : "rejected";
 
     notification.status = newStatus;
     notification.read = true;
     await notification.save();
 
     const senderId = notification.senderId || notification.sender?._id || notification.sender;
-    const statusText = action === "approve" ? "approved" : "declined";
+    const statusText = isApprove ? "approved" : "declined";
 
-    await Notification.create({
-      recipient: senderId,
+    // 1. Sync Investment Interest if this request is an investment
+    if (
+      notification.type === "investment_interest" ||
+      notification.entityType === "investment" ||
+      notification.entityType === "investment_interest"
+    ) {
+      try {
+        let interest = null;
+        if (notification.entityId) {
+          interest = await InvestmentInterest.findById(notification.entityId);
+        }
+        if (!interest && notification.startupId && senderId) {
+          interest = await InvestmentInterest.findOne({
+            startupId: notification.startupId,
+            investorId: senderId,
+          }).sort({ createdAt: -1 });
+        }
+        if (interest) {
+          await investmentService.updateInterestStatus(interest._id, req.userId, {
+            status: isApprove ? "accepted" : "rejected",
+          });
+        }
+      } catch (err) {
+        console.error("Failed to sync investment interest status on notification approval:", err);
+      }
+    }
+
+    // 2. Sync Mentorship Request if this request is mentorship
+    if (
+      notification.type === "mentorship" ||
+      notification.type === "mentorship_request" ||
+      notification.entityType === "mentorship" ||
+      notification.entityType === "mentorship_request"
+    ) {
+      try {
+        let mentorshipReq = null;
+        if (notification.entityId) {
+          mentorshipReq = await MentorshipRequest.findById(notification.entityId);
+        }
+        if (!mentorshipReq && senderId) {
+          mentorshipReq = await MentorshipRequest.findOne({
+            $or: [
+              { requestedBy: senderId, mentorId: req.userId },
+              { founderId: req.userId, mentorId: senderId },
+              { founderId: senderId, mentorId: req.userId },
+            ],
+          }).sort({ createdAt: -1 });
+        }
+        if (mentorshipReq) {
+          await mentorService.updateMentorshipRequestStatus(mentorshipReq._id, req.userId, {
+            status: isApprove ? "accepted" : "rejected",
+          });
+        }
+      } catch (err) {
+        console.error("Failed to sync mentorship request status on notification approval:", err);
+      }
+    }
+
+    // 3. Sync Application if this request is job/project application
+    if (
+      notification.type === "application" ||
+      notification.entityType === "application"
+    ) {
+      try {
+        let application = null;
+        if (notification.entityId) {
+          application = await Application.findById(notification.entityId);
+        }
+        if (!application && notification.startupId && senderId) {
+          application = await Application.findOne({
+            startupId: notification.startupId,
+            applicantId: senderId,
+          }).sort({ createdAt: -1 });
+        }
+        if (application) {
+          await applicationService.updateApplicationStatus(application._id, req.userId, {
+            status: isApprove ? "accepted" : "rejected",
+          });
+        }
+      } catch (err) {
+        console.error("Failed to sync application status on notification approval:", err);
+      }
+    }
+
+    // 4. If this is an Intro Request, establish conversation and check for pending investment interest
+    if (notification.type === "intro_request" && isApprove) {
+      try {
+        const conversation = await messageService.getOrCreateConversation({
+          userId: req.userId,
+          targetUserId: senderId,
+          type: "startup",
+          relatedStartupId: notification.startupId || null,
+        });
+        await messageService.sendMessage(
+          conversation._id,
+          req.userId,
+          `Hi ${notification.sender?.name || "there"}, introduction accepted! Glad to connect regarding ${notification.startupName || "our startup"}.`,
+        );
+
+        if (notification.startupId) {
+          const linkedInterest = await InvestmentInterest.findOne({
+            startupId: notification.startupId,
+            investorId: senderId,
+          }).sort({ createdAt: -1 });
+          if (linkedInterest && linkedInterest.status === "pending") {
+            await investmentService.updateInterestStatus(linkedInterest._id, req.userId, {
+              status: "accepted",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize conversation on intro approval:", err);
+      }
+    }
+
+    await createNotification({
       recipientId: senderId,
-      sender: req.userId,
       senderId: req.userId,
       type: "request_response",
-      title: action === "approve" ? "Request Approved! 🎉" : "Request Update",
+      title: isApprove ? "Request Approved! 🎉" : "Request Update",
       message: `${responder?.name || "The founder"} ${statusText} your ${notification.type.replace("_", " ")}${notification.startupName ? ` for ${notification.startupName}` : ""}.`,
       startupId: notification.startupId,
       startupName: notification.startupName,
       status: newStatus,
-      read: false,
+    });
+
+    broadcastToUser(senderId, {
+      type: "request:responded",
+      notificationId: notification._id.toString(),
+      status: newStatus,
+      action,
     });
 
     return res.json({
