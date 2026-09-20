@@ -25,7 +25,7 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [sort, setSort] = useState("recommended");
-  const { isBookmarked, toggleBookmark } = useBookmarks();
+  const { isBookmarked, toggleBookmark, count: savedCount } = useBookmarks();
   const [mobileFilters, setMobileFilters] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [catalogStatus, setCatalogStatus] = useState("loading");
@@ -40,7 +40,12 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
     fetchStartups()
       .then((response) => {
         if (!active) return;
-        setCatalog(response.startups);
+        const list = Array.isArray(response?.startups)
+          ? response.startups
+          : Array.isArray(response?.data)
+            ? response.data
+            : [];
+        setCatalog(list);
         setCatalogStatus("ready");
       })
       .catch((error) => {
@@ -56,7 +61,9 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
 
   const companies = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    const filtered = catalog.filter((company) => {
+    const list = Array.isArray(catalog) ? catalog : [];
+    const filtered = list.filter((company) => {
+      if (!company) return false;
       const searchable = [
         company.name,
         company.description,
@@ -64,6 +71,7 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
         company.location,
         company.founder,
       ]
+        .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
@@ -72,16 +80,16 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
         (!filters.industries.length || filters.industries.includes(company.industry)) &&
         (!filters.stages.length || filters.stages.includes(company.stage)) &&
         (!filters.regions.length || filters.regions.some((region) => inRegion(company, region))) &&
-        (!filters.hiring || company.hiring) &&
-        (!filters.top || company.top)
+        (!filters.hiring || Boolean(company.hiring)) &&
+        (!filters.top || Boolean(company.top))
       );
     });
 
     return [...filtered].sort((left, right) => {
-      if (sort === "growth") return right.growth - left.growth;
-      if (sort === "newest") return right.founded - left.founded;
-      if (sort === "team") return right.team - left.team;
-      return Number(right.top) - Number(left.top) || right.growth - left.growth;
+      if (sort === "growth") return (right.growth || 0) - (left.growth || 0);
+      if (sort === "newest") return (right.founded || 0) - (left.founded || 0);
+      if (sort === "team") return (right.team || 0) - (left.team || 0);
+      return Number(right.top) - Number(left.top) || (right.growth || 0) - (left.growth || 0);
     });
   }, [catalog, filters, query, sort]);
 
@@ -210,7 +218,7 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
                 curated companies
               </p>
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <FiBookmark /> {saved.length} saved
+                <FiBookmark /> {savedCount || 0} saved
               </span>
             </div>
 
@@ -331,6 +339,8 @@ function Metric({ value, label }) {
 }
 
 function FilterContent({ catalog, filters, setFilters, toggleList }) {
+  const safeList = Array.isArray(catalog) ? catalog : [];
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -349,33 +359,33 @@ function FilterContent({ catalog, filters, setFilters, toggleList }) {
           checked={filters.top}
           onChange={() => setFilters((current) => ({ ...current, top: !current.top }))}
           label="Top companies"
-          count={catalog.filter((company) => company.top).length}
+          count={safeList.filter((company) => Boolean(company?.top)).length}
         />
         <Toggle
           checked={filters.hiring}
           onChange={() => setFilters((current) => ({ ...current, hiring: !current.hiring }))}
           label="Actively hiring"
-          count={catalog.filter((company) => company.hiring).length}
+          count={safeList.filter((company) => Boolean(company?.hiring)).length}
         />
       </div>
 
       <FilterGroup
         label="Stage"
-        catalog={catalog}
+        catalog={safeList}
         items={STAGES}
         selected={filters.stages}
         onToggle={(item) => toggleList("stages", item)}
       />
       <FilterGroup
         label="Industry"
-        catalog={catalog}
+        catalog={safeList}
         items={INDUSTRIES}
         selected={filters.industries}
         onToggle={(item) => toggleList("industries", item)}
       />
       <FilterGroup
         label="Region"
-        catalog={catalog}
+        catalog={safeList}
         items={REGIONS}
         selected={filters.regions}
         onToggle={(item) => toggleList("regions", item)}
@@ -385,6 +395,8 @@ function FilterContent({ catalog, filters, setFilters, toggleList }) {
 }
 
 function FilterGroup({ catalog, label, items, selected, onToggle }) {
+  const safeList = Array.isArray(catalog) ? catalog : [];
+
   return (
     <div className="mt-6 border-t border-foreground/8 pt-5">
       <p className="mb-3 text-xs font-bold tracking-[0.1em] uppercase">{label}</p>
@@ -396,13 +408,12 @@ function FilterGroup({ catalog, label, items, selected, onToggle }) {
             onChange={() => onToggle(item)}
             label={item}
             count={
-              catalog.filter((company) =>
-                label === "Stage"
-                  ? company.stage === item
-                  : label === "Industry"
-                    ? company.industry === item
-                    : inRegion(company, item),
-              ).length
+              safeList.filter((company) => {
+                if (!company) return false;
+                if (label === "Stage") return company.stage === item;
+                if (label === "Industry") return company.industry === item;
+                return inRegion(company, item);
+              }).length
             }
           />
         ))}
@@ -432,12 +443,11 @@ function Toggle({ checked, onChange, label, count }) {
 }
 
 function inRegion(company, region) {
-  if (region === "India") return company.location.includes("India");
-  if (region === "USA") return company.location.includes("USA");
-  if (region === "Canada") return company.location.includes("Canada");
+  const loc = typeof company?.location === "string" ? company.location : "";
+  if (region === "India") return loc.includes("India");
+  if (region === "USA") return loc.includes("USA");
+  if (region === "Canada") return loc.includes("Canada");
   if (region === "Asia Pacific")
-    return ["Singapore", "Australia"].some((place) => company.location.includes(place));
-  return ["UK", "Germany", "France", "Netherlands"].some((place) =>
-    company.location.includes(place),
-  );
+    return ["Singapore", "Australia"].some((place) => loc.includes(place));
+  return ["UK", "Germany", "France", "Netherlands"].some((place) => loc.includes(place));
 }

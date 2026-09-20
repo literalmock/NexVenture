@@ -15,23 +15,38 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export function CompanyCard({ company, saved, onSave, index, onRequestSent }) {
+  if (!company) return null;
+  const companyId = company.id || company._id;
   const { user } = useAuth();
   const [requestStatus, setRequestStatus] = useState(null); // 'sending' | 'sent' | 'error'
   const [requestMsg, setRequestMsg] = useState("");
   const activeRole = user?.activeRole || user?.role;
 
+  const initials =
+    company.initials ||
+    (company.name
+      ? company.name
+          .split(" ")
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((n) => n[0])
+          .join("")
+          .toUpperCase()
+      : "NV");
+  const color = company.color || "#2563eb";
+
   async function handleSendRequest() {
-    if (!user) return;
+    if (!user || !companyId) return;
     setRequestStatus("sending");
     try {
       const type = company.hiring && activeRole === "student" ? "application" : "intro_request";
       await sendIntroRequest({
-        startupId: company.id,
+        startupId: companyId,
         type,
-        message: `${user.name} (${activeRole}) requested an introduction to ${company.name}.`,
+        message: `${user.name || "A user"} (${activeRole || "member"}) requested an introduction to ${company.name || "the startup"}.`,
       });
       setRequestStatus("sent");
-      if (onRequestSent) onRequestSent(company.id);
+      if (onRequestSent) onRequestSent(companyId);
     } catch (err) {
       setRequestStatus("error");
       setRequestMsg(err.message || "Failed to send request.");
@@ -49,10 +64,10 @@ export function CompanyCard({ company, saved, onSave, index, onRequestSent }) {
       <div className="flex items-start gap-4 sm:gap-5">
         <div
           className="flex size-13 shrink-0 items-center justify-center rounded-2xl text-sm font-bold tracking-[-0.04em] text-white sm:size-14"
-          style={{ backgroundColor: company.color }}
+          style={{ backgroundColor: color }}
           aria-hidden="true"
         >
-          {company.initials}
+          {initials}
         </div>
 
         <div className="min-w-0 flex-1">
@@ -76,9 +91,9 @@ export function CompanyCard({ company, saved, onSave, index, onRequestSent }) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                aria-label={`${saved ? "Remove" : "Save"} ${company.name}`}
+                aria-label={`${saved ? "Remove" : "Save"} ${company.name || "company"}`}
                 aria-pressed={saved}
-                onClick={() => onSave(company.id)}
+                onClick={() => onSave && onSave(companyId)}
                 className={cn(
                   "flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors",
                   saved
