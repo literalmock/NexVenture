@@ -1138,12 +1138,18 @@ test("complete ecosystem integration: multi-role, startups, pitches, investments
           notification.recipient.toString() === studentId,
       ),
     );
-    assert.ok(
+    // Chat messages must NEVER contaminate the Notification collection
+    assert.equal(
       mentorshipNotifications.some(
-        (notification) =>
-          notification.type === "message" && notification.recipient.toString() === mentorId,
+        (notification) => notification.type === "message" || notification.type === "MESSAGE",
       ),
+      false,
     );
+
+    // Unread messages are tracked separately
+    const unreadMessagesRes = await api.get("/messages/unread-count", mentorToken);
+    assert.equal(unreadMessagesRes.response.status, 200);
+    assert.ok(unreadMessagesRes.body.unreadCount >= 1);
 
     // 20. Switch active role for Founder to Mentor
     const switchRoleRes = await api.patch(

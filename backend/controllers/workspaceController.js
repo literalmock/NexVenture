@@ -38,6 +38,7 @@ export async function toggleBookmark(req, res, next) {
       : [...existing, sid];
 
     user.workspace.bookmarkedStartupIds = nextBookmarks;
+    user.markModified("workspace");
     await user.save();
 
     return res.json({
@@ -244,6 +245,7 @@ export async function getWorkspaceStats(req, res, next) {
     return res.json({
       success: true,
       metrics,
+      unreadMessages: Number(unreadMessages || 0),
       counts: {
         totalStartups,
         hiringStartups,

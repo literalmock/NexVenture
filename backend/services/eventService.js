@@ -118,12 +118,15 @@ export async function rsvpToEvent(eventId, userId) {
       user.workspace.eventRsvps = user.workspace.eventRsvps.filter(
         (id) => id !== eventId && id !== event._id.toString(),
       );
+      user.markModified("workspace");
       await user.save();
     }
 
     return {
       success: true,
       rsvpd: false,
+      isRsvpd: false,
+      eventRsvps: user.workspace?.eventRsvps || [],
       eventId: event._id.toString(),
       attendeesCount: event.attendees.length,
       message: "RSVP cancelled successfully.",
@@ -144,6 +147,7 @@ export async function rsvpToEvent(eventId, userId) {
   const existingRsvps = user.workspace.eventRsvps || [];
   if (!existingRsvps.includes(event._id.toString())) {
     user.workspace.eventRsvps = [...existingRsvps, event._id.toString()];
+    user.markModified("workspace");
     await user.save();
   }
 
@@ -164,6 +168,8 @@ export async function rsvpToEvent(eventId, userId) {
   return {
     success: true,
     rsvpd: true,
+    isRsvpd: true,
+    eventRsvps: user.workspace.eventRsvps,
     eventId: event._id.toString(),
     attendeesCount: event.attendees.length,
     message: "RSVP confirmed successfully!",

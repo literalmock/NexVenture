@@ -25,6 +25,7 @@ import { PostComposer } from "@/components/nex/PostComposer";
 import { PostFeed } from "@/components/nex/PostFeed";
 import { WorkspaceSidebar } from "@/components/nex/WorkspaceSidebar";
 import { rsvpEvent } from "@/lib/api/notificationClient";
+import { fetchUpcomingEvents } from "@/lib/api/eventClient";
 import { fetchWorkspaceStats } from "@/lib/api/workspaceClient";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -147,11 +148,15 @@ const ROLE_CONFIG = {
   },
 };
 
-const UPCOMING_EVENTS = [
-  { id: "demo-day", title: "Demo Day — Seed Cohort", when: "Sep 03 · 5:00 PM" },
-  { id: "saas-ama", title: "Investor AMA: SaaS Metrics", when: "Sep 08 · 7:30 PM" },
-  { id: "office-hours", title: "Founder Office Hours", when: "Sep 12 · 11:00 AM" },
-];
+function formatEventWhen(startTime) {
+  if (!startTime) return "";
+  const d = new Date(startTime);
+  return (
+    d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+    " · " +
+    d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+  );
+}
 
 // ─── Route ───────────────────────────────────────────────────────────────────
 
@@ -229,6 +234,7 @@ function DashboardPage() {
   const [latestPost, setLatestPost] = useState(null);
   const [liveStats, setLiveStats] = useState(null);
   const [rsvpdEvents, setRsvpdEvents] = useState(user?.workspace?.eventRsvps || []);
+  const [upcomingEvents, setUpcomingEvents] = useState([]);
 
   const role = user?.activeRole || user?.role || "founder";
   const cfg = ROLE_CONFIG[role] ?? ROLE_CONFIG.founder;
@@ -244,17 +250,34 @@ function DashboardPage() {
     }
   }, []);
 
+  const loadEvents = useCallback(async () => {
+    try {
+      const res = await fetchUpcomingEvents();
+      if (res?.success && Array.isArray(res.data)) {
+        setUpcomingEvents(res.data);
+      }
+    } catch {
+      /* silent */
+    }
+  }, []);
+
   useEffect(() => {
     loadStats();
-    const interval = setInterval(loadStats, 8000);
+    loadEvents();
+    const interval = setInterval(() => {
+      loadStats();
+      loadEvents();
+    }, 12000);
     return () => clearInterval(interval);
-  }, [loadStats]);
+  }, [loadStats, loadEvents]);
 
   async function handleRsvp(eventItem) {
+    const eventId = eventItem._id || eventItem.id;
     try {
-      const res = await rsvpEvent(eventItem.id, eventItem.title);
+      const res = await rsvpEvent(eventId, eventItem.name || eventItem.title);
       setRsvpdEvents(res.eventRsvps || []);
       loadStats();
+      loadEvents();
     } catch {
       /* silent */
     }
@@ -485,32 +508,39 @@ function DashboardPage() {
               onAction={() => navigate({ to: "/workspace/events" })}
             >
               <div className="space-y-2.5">
-                {UPCOMING_EVENTS.map((event) => {
-                  const isGoing = rsvpdEvents.includes(event.id);
-                  return (
-                    <div
-                      key={event.id}
-                      className="flex items-center justify-between rounded-2xl border border-border/70 bg-card/70 p-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold leading-tight">{event.title}</p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">{event.when}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRsvp(event)}
-                        className={cn(
-                          "ml-2 rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all active:scale-95",
-                          isGoing
-                            ? "bg-emerald-500/15 text-emerald-500"
-                            : "bg-foreground text-background hover:opacity-90",
-                        )}
+                {upcomingEvents.length === 0 ? (
+                  <p className="py-2 text-xs text-muted-foreground">No upcoming events scheduled.</p>
+                ) : (
+                  upcomingEvents.slice(0, 3).map((event) => {
+                    const eventId = event._id || event.id;
+                    const isGoing = rsvpdEvents.includes(eventId);
+                    return (
+                      <div
+                        key={eventId}
+                        className="flex items-center justify-between rounded-2xl border border-border/70 bg-card/70 p-3"
                       >
-                        {isGoing ? "Going ✓" : "RSVP"}
-                      </button>
-                    </div>
-                  );
-                })}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold leading-tight">{event.name}</p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            {formatEventWhen(event.startTime)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRsvp(event)}
+                          className={cn(
+                            "ml-2 rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all active:scale-95",
+                            isGoing
+                              ? "bg-emerald-500/15 text-emerald-500"
+                              : "bg-foreground text-background hover:opacity-90",
+                          )}
+                        >
+                          {isGoing ? "Going ✓" : "RSVP"}
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </Panel>
 

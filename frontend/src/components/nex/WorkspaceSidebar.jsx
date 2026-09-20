@@ -20,6 +20,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Logo } from "@/components/nex/Logo";
 import { NotificationBell } from "@/components/nex/NotificationBell";
 import { getNotifications } from "@/lib/api/notificationClient";
+import { useRealtime } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
 import { USER_ROLE_BADGES } from "@/utils/enums";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,8 @@ export function WorkspaceSidebar({ open, onClose }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
-  const [unreadCounts, setUnreadCounts] = useState({ total: 0, messages: 0, requests: 0 });
+  const { unreadMessagesCount } = useRealtime();
+  const [unreadCounts, setUnreadCounts] = useState({ total: 0, requests: 0 });
 
   useEffect(() => {
     let mounted = true;
@@ -89,9 +91,8 @@ export function WorkspaceSidebar({ open, onClose }) {
         if (!mounted) return;
         const notifs = res.notifications || res.data || [];
         const total = res.unreadCount ?? notifs.filter((n) => !n.read).length;
-        const messages = notifs.filter((n) => n.type === "message" && !n.read).length;
         const requests = res.pendingRequestsCount ?? notifs.filter((n) => n.status === "pending").length;
-        setUnreadCounts({ total, messages, requests });
+        setUnreadCounts({ total, requests });
       } catch {
         // silent
       }
@@ -104,9 +105,8 @@ export function WorkspaceSidebar({ open, onClose }) {
       if (e?.detail) {
         const notifs = e.detail.notifications || [];
         const total = e.detail.unreadCount ?? notifs.filter((n) => !n.read).length;
-        const messages = notifs.filter((n) => n.type === "message" && !n.read).length;
         const requests = e.detail.pendingCount ?? notifs.filter((n) => n.status === "pending").length;
-        setUnreadCounts({ total, messages, requests });
+        setUnreadCounts({ total, requests });
       } else {
         fetchCounts();
       }
@@ -178,7 +178,7 @@ export function WorkspaceSidebar({ open, onClose }) {
             const active =
               item.to === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.to);
             const isMessages = item.label === "Messages";
-            const messageBadgeCount = isMessages ? unreadCounts.messages : 0;
+            const messageBadgeCount = isMessages ? unreadMessagesCount : 0;
 
             return (
               <button

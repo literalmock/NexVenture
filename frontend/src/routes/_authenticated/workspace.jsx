@@ -71,6 +71,9 @@ import {
 } from "@/lib/api/startupClient";
 import { fetchWorkspace, fetchWorkspaceStats, patchWorkspace } from "@/lib/api/workspaceClient";
 import { rsvpEvent, sendIntroRequest } from "@/lib/api/notificationClient";
+import { fetchUpcomingEvents } from "@/lib/api/eventClient";
+import { useBookmarks } from "@/lib/bookmarks";
+import { useRealtime } from "@/lib/realtime";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { USER_ROLE_LABELS, USER_ROLE_VALUES } from "@/utils/enums";
@@ -222,33 +225,6 @@ const MESSAGE_ATTACHMENT_ACCEPT = [
   ".ods",
   ".odp",
 ].join(",");
-
-const EVENTS = [
-  {
-    id: "demo-day",
-    day: "03",
-    month: "SEP",
-    name: "NEX Demo Day — Seed Cohort",
-    location: "Bengaluru · The Foundry",
-    time: "5:00 PM",
-  },
-  {
-    id: "saas-ama",
-    day: "08",
-    month: "SEP",
-    name: "Investor AMA: SaaS Metrics",
-    location: "Online · Live room",
-    time: "7:30 PM",
-  },
-  {
-    id: "office-hours",
-    day: "12",
-    month: "SEP",
-    name: "Founder Office Hours",
-    location: "Mumbai · BKC",
-    time: "11:00 AM",
-  },
-];
 
 export const Route = createFileRoute("/_authenticated/workspace/$section")({
   head: () => ({
@@ -4807,11 +4783,31 @@ function AnalyticsSection() {
 }
 
 function EventsSection({ workspace, persist }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
   const rsvps = workspace.eventRsvps || [];
+
+  const loadEvents = useCallback(async () => {
+    try {
+      const res = await fetchUpcomingEvents();
+      if (res?.success && Array.isArray(res.data)) {
+        setEvents(res.data);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
   async function toggle(id) {
     const isRsvping = !rsvps.includes(id);
     const next = isRsvping ? [...rsvps, id] : rsvps.filter((item) => item !== id);
-    const targetEvent = EVENTS.find((e) => e.id === id);
+    const targetEvent = events.find((e) => (e._id || e.id) === id);
 
     try {
       await rsvpEvent(id, targetEvent?.name).catch(() => {});
@@ -4820,48 +4816,79 @@ function EventsSection({ workspace, persist }) {
         next,
         isRsvping ? "Your seat is confirmed! RSVP recorded." : "RSVP cancelled.",
       );
+      loadEvents();
     } catch {
       /* notice above */
     }
   }
+
+  if (loading) return <WorkspaceSkeleton />;
+
+  if (events.length === 0) {
+    return (
+      <EmptyState
+        title="No upcoming events"
+        body="There are no scheduled upcoming events right now. Check back soon for new demo days and workshops."
+      />
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {EVENTS.map((event) => (
-        <article
-          key={event.id}
-          className="grid gap-4 rounded-3xl border border-border bg-card p-5 shadow-[var(--shadow-soft)] sm:grid-cols-[72px_1fr_auto] sm:items-center"
-        >
-          <div className="rounded-2xl bg-secondary py-3 text-center">
-            <p className="text-[10px] font-bold tracking-widest text-primary">{event.month}</p>
-            <p className="font-display text-2xl font-bold">{event.day}</p>
-          </div>
-          <div>
-            <h2 className="text-base font-bold">{event.name}</h2>
-            <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <FiMapPin />
-                {event.location}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <FiClock />
-                {event.time}
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => toggle(event.id)}
-            className={cn(
-              "h-10 rounded-xl px-5 text-sm font-bold",
-              rsvps.includes(event.id)
-                ? "bg-success/10 text-success"
-                : "bg-foreground text-background",
-            )}
+      {events.map((event) => {
+        const id = event._id || event.id;
+        const d = new Date(event.startTime);
+        const month = d.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
+        const day = String(d.getDate()).padStart(2, "0");
+        const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+        return (
+          <article
+            key={id}
+            className="grid gap-4 rounded-3xl border border-border bg-card p-5 shadow-[var(--shadow-soft)] sm:grid-cols-[72px_1fr_auto] sm:items-center"
           >
-            {rsvps.includes(event.id) ? "Going ✓" : "RSVP"}
-          </button>
-        </article>
-      ))}
+            <div className="rounded-2xl bg-secondary py-3 text-center">
+              <p className="text-[10px] font-bold tracking-widest text-primary">{month}</p>
+              <p className="font-display text-2xl font-bold">{day}</p>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold">{event.name}</h2>
+                {event.type && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary capitalize">
+                    {event.type.replace("_", " ")}
+                  </span>
+                )}
+              </div>
+              {event.description && (
+                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{event.description}</p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <FiMapPin />
+                  {event.location || (event.isOnline ? "Online" : "TBA")}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <FiClock />
+                  {time}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => toggle(id)}
+              className={cn(
+                "h-10 rounded-xl px-5 text-sm font-bold transition-all",
+                rsvps.includes(id)
+                  ? "bg-success/10 text-success"
+                  : "bg-foreground text-background hover:opacity-90",
+              )}
+            >
+              {rsvps.includes(id) ? "Going ✓" : "RSVP"}
+            </button>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -4880,6 +4907,7 @@ function MessagesSection() {
   const [messageStatus, setMessageStatus] = useState("idle");
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [sending, setSending] = useState(false);
+  const { joinConversation } = useRealtime();
   const [notice, setNotice] = useState("");
 
   const handleRealtimeEvent = useCallback((raw) => {
@@ -4909,6 +4937,24 @@ function MessagesSection() {
         setMessages((current) => appendById(current, payload.message));
       }
     }
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalRealtime = (e) => {
+      const payload = e?.detail;
+      if (!payload) return;
+      if (payload.type === "message:sent" || payload.type === "message:new") {
+        if (payload.conversation) {
+          setConversations((current) => upsertConversation(current, payload.conversation));
+        }
+
+        if (payload.conversationId === activeIdRef.current && payload.message) {
+          setMessages((current) => appendById(current, payload.message));
+        }
+      }
+    };
+    window.addEventListener("nex:message_received", handleGlobalRealtime);
+    return () => window.removeEventListener("nex:message_received", handleGlobalRealtime);
   }, []);
 
   useEffect(() => {
@@ -4972,12 +5018,15 @@ function MessagesSection() {
   useEffect(() => {
     activeIdRef.current = activeId;
     setPendingAttachments([]);
-    if (activeId && socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({ type: "conversation:join", conversationId: activeId }),
-      );
+    if (activeId) {
+      joinConversation(activeId);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({ type: "conversation:join", conversationId: activeId }),
+        );
+      }
     }
-  }, [activeId]);
+  }, [activeId, joinConversation]);
 
   useEffect(() => {
     if (!activeId) {
@@ -5387,60 +5436,58 @@ async function openAttachment(attachment) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 }
 
-function BookmarksSection({ workspace, startups, persist }) {
-  const saved = workspace.bookmarkedStartupIds || [];
-  const visible = useMemo(() => startups.slice(0, 8), [startups]);
-  async function toggle(id) {
-    const next = saved.includes(id) ? saved.filter((item) => item !== id) : [...saved, id];
-    try {
-      await persist(
-        "bookmarkedStartupIds",
-        next,
-        saved.includes(id) ? "Removed from bookmarks." : "Startup bookmarked.",
-      );
-    } catch {
-      /* notice above */
-    }
-  }
+function BookmarksSection({ startups }) {
+  const { isBookmarked, toggleBookmark } = useBookmarks();
+
+  const savedStartups = useMemo(() => {
+    return startups.filter((startup) => isBookmarked(startup.id || startup._id));
+  }, [startups, isBookmarked]);
+
   return (
     <div>
       <div className="mb-5 flex items-end justify-between">
         <div>
-          <p className="text-3xl font-semibold">{saved.length}</p>
+          <p className="text-3xl font-semibold">{savedStartups.length}</p>
           <p className="text-sm text-muted-foreground">companies on your shortlist</p>
         </div>
         <FiBookmark className="size-6 text-primary" />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {visible.map((startup) => (
-          <article key={startup.id} className="rounded-2xl border border-border bg-card p-4">
-            <div className="flex items-start gap-3">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-secondary text-xs font-bold">
-                {startup.initials}
-              </span>
-              <div className="min-w-0">
-                <p className="font-bold">{startup.name}</p>
-                <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {startup.description}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => toggle(startup.id)}
-                aria-label={`Toggle ${startup.name} bookmark`}
-                className={cn(
-                  "ml-auto flex size-9 shrink-0 items-center justify-center rounded-xl border",
-                  saved.includes(startup.id)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border",
-                )}
-              >
-                <FiBookmark />
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+
+      {savedStartups.length === 0 ? (
+        <EmptyState
+          title="No bookmarked companies yet"
+          body="Explore the startup directory to bookmark innovative companies and build your private shortlist."
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {savedStartups.map((startup) => {
+            const startupId = startup.id || startup._id;
+            return (
+              <article key={startupId} className="rounded-2xl border border-border bg-card p-4">
+                <div className="flex items-start gap-3">
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-secondary text-xs font-bold">
+                    {startup.initials || initialsFor(startup.name)}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-bold">{startup.name}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                      {startup.description}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleBookmark(startupId)}
+                    aria-label={`Remove ${startup.name} from bookmarks`}
+                    className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-xl border border-primary bg-primary text-primary-foreground transition-transform active:scale-95"
+                  >
+                    <FiBookmark className="fill-current" />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

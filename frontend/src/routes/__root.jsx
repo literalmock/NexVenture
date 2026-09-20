@@ -1,5 +1,7 @@
 import { Link, Outlet, createRootRoute } from "@tanstack/react-router";
 import { AuthProvider } from "../lib/auth";
+import { RealtimeProvider } from "../lib/realtime";
+import { BookmarkProvider } from "../lib/bookmarks";
 
 function NotFoundPage() {
   return (
@@ -24,7 +26,11 @@ function NotFoundPage() {
 function RootLayout() {
   return (
     <AuthProvider>
-      <Outlet />
+      <RealtimeProvider>
+        <BookmarkProvider>
+          <Outlet />
+        </BookmarkProvider>
+      </RealtimeProvider>
     </AuthProvider>
   );
 }

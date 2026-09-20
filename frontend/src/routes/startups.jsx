@@ -6,6 +6,7 @@ import { CompanyCard } from "@/components/nex/CompanyCard";
 import { DirectoryNavbar } from "@/components/nex/DirectoryNavbar";
 import { INDUSTRIES, REGIONS, STAGES } from "@/data/companies";
 import { fetchStartups } from "@/lib/api/startupClient";
+import { useBookmarks } from "@/lib/bookmarks";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/startups")({
@@ -24,7 +25,7 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [sort, setSort] = useState("recommended");
-  const [saved, setSaved] = useState([]);
+  const { isBookmarked, toggleBookmark } = useBookmarks();
   const [mobileFilters, setMobileFilters] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [catalogStatus, setCatalogStatus] = useState("loading");
@@ -98,12 +99,6 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
         ? current[key].filter((item) => item !== value)
         : [...current[key], value],
     }));
-  }
-
-  function toggleSaved(id) {
-    setSaved((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
   }
 
   return (
@@ -246,10 +241,10 @@ export function StartupDirectory({ showNavbar = true, workspace = false }) {
               <div className="space-y-3">
                 {companies.map((company, index) => (
                   <CompanyCard
-                    key={company.id}
+                    key={company.id || company._id}
                     company={company}
-                    saved={saved.includes(company.id)}
-                    onSave={toggleSaved}
+                    saved={isBookmarked(company.id || company._id)}
+                    onSave={toggleBookmark}
                     index={index}
                   />
                 ))}

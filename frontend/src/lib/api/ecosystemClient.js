@@ -216,3 +216,7 @@ function resolveProtectedApiUrl(url) {
 
   return `${base}${path}`;
 }
+
+export function fetchUnreadMessageCount() {
+  return request("/messages/unread-count", { token: getToken() });
+}
