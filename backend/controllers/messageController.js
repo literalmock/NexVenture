@@ -96,3 +96,13 @@ export async function getAttachment(req, res, next) {
     return next(error);
   }
 }
+
+export async function getUnreadCount(req, res, next) {
+  try {
+    const unreadCount = await messageService.getUnreadMessagesCount(req.userId);
+    return res.json({ success: true, unreadCount });
+  } catch (error) {
+    return next(error);
+  }
+}
+

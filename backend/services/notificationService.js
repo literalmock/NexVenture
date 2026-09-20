@@ -1,4 +1,5 @@
 import Notification from "../models/Notification.js";
+import { broadcastNotification } from "../realtime/messageSocket.js";
 
 /**
  * Creates and persists a notification in the database.
@@ -52,7 +53,13 @@ export async function createNotification({
       read: false,
     });
 
-    return notification;
+    const populated = await Notification.findById(notification._id)
+      .populate("sender", "name avatarUrl role headline activeRole")
+      .populate("senderId", "name avatarUrl role headline activeRole");
+
+    broadcastNotification(recipientId, populated);
+
+    return populated;
   } catch (error) {
     console.error("Failed to create notification:", error.message);
     return null;

@@ -19,3 +19,10 @@ export function patchWorkspace(field, value) {
     body: { field, value },
   });
 }
+
+export function toggleBookmarkApi(startupId) {
+  return request(`/workspace/bookmarks/${startupId}`, {
+    method: "POST",
+    token: getToken(),
+  });
+}

@@ -3,6 +3,7 @@ import Post from "../models/Post.js";
 import Startup from "../models/Startup.js";
 import User from "../models/User.js";
 import { getUserIdFromToken } from "../utils/token.js";
+import { getUnreadMessagesCount } from "../services/messageService.js";
 
 const ARRAY_FIELDS = ["investorConnections", "eventRsvps", "bookmarkedStartupIds"];
 
@@ -12,6 +13,40 @@ export async function getWorkspace(req, res, next) {
     if (!user) return unauthorized(res);
 
     return res.json({ success: true, workspace: serializeWorkspace(user.workspace) });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function toggleBookmark(req, res, next) {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return unauthorized(res);
+
+    const startupId = req.params.startupId || req.body.startupId;
+    if (!startupId) {
+      return res.status(400).json({ success: false, error: "startupId is required." });
+    }
+
+    if (!user.workspace) user.workspace = {};
+    const existing = user.workspace.bookmarkedStartupIds || [];
+    const sid = String(startupId).trim();
+    const isBookmarked = existing.includes(sid);
+
+    const nextBookmarks = isBookmarked
+      ? existing.filter((id) => id !== sid)
+      : [...existing, sid];
+
+    user.workspace.bookmarkedStartupIds = nextBookmarks;
+    await user.save();
+
+    return res.json({
+      success: true,
+      bookmarked: !isBookmarked,
+      startupId: sid,
+      bookmarkedStartupIds: nextBookmarks,
+      message: !isBookmarked ? "Startup bookmarked." : "Removed from bookmarks.",
+    });
   } catch (error) {
     return next(error);
   }
@@ -34,12 +69,13 @@ export async function getWorkspaceStats(req, res, next) {
       outgoingRequests,
       approvedRequests,
       recentNotifications,
+      unreadMessages,
     ] = await Promise.all([
       Startup.countDocuments(),
       Startup.countDocuments({ hiring: true }),
       getUserPostStats(userId),
-      Notification.countDocuments({ recipient: userId }),
-      Notification.countDocuments({ recipient: userId, status: "pending" }),
+      Notification.countDocuments({ recipient: userId, type: { $nin: ["message", "MESSAGE"] } }),
+      Notification.countDocuments({ recipient: userId, status: "pending", type: { $nin: ["message", "MESSAGE"] } }),
       Notification.countDocuments({ sender: userId }),
       Notification.countDocuments({
         $or: [
@@ -47,11 +83,15 @@ export async function getWorkspaceStats(req, res, next) {
           { sender: userId, status: "approved" },
         ],
       }),
-      Notification.find({ recipient: userId })
+      Notification.find({
+        recipient: userId,
+        type: { $nin: ["message", "MESSAGE"] },
+      })
         .sort({ createdAt: -1 })
         .limit(5)
-        .populate("sender", "name role")
+        .populate("sender", "name role avatarUrl")
         .exec(),
+      getUnreadMessagesCount(userId),
     ]);
 
     const userPostsCount = postStats.postsCount;
@@ -210,6 +250,7 @@ export async function getWorkspaceStats(req, res, next) {
         bookmarkedCount,
         rsvpsCount,
         unreadNotifications: recentNotifications.filter((n) => !n.read).length,
+        unreadMessages: Number(unreadMessages || 0),
         pendingRequests,
         approvedRequests,
         userPostsCount,

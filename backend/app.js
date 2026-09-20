@@ -8,6 +8,7 @@ import Post from "./models/Post.js";
 import apiRoutes from "./routes/index.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import { reconcileInvestmentInterestLifecycle } from "./services/investmentService.js";
+import { ensureDefaultEvents, checkAndGenerateEventReminders } from "./services/eventService.js";
 
 function buildAllowedOrigins() {
   return new Set([
@@ -104,5 +105,9 @@ export async function runStartupTasks() {
     { commentCount: { $exists: false } },
     [{ $set: { commentCount: { $size: { $ifNull: ["$comments", []] } } } }],
     { updatePipeline: true },
+  );
+  await ensureDefaultEvents().catch((err) => console.error("Event init error:", err.message));
+  await checkAndGenerateEventReminders().catch((err) =>
+    console.error("Event reminder check error:", err.message),
   );
 }

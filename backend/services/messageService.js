@@ -16,7 +16,17 @@ import {
   saveConversationAttachment,
 } from "./fileStorageService.js";
 import { ensureInvestmentDealRoom } from "./investmentService.js";
-import { createNotification } from "./notificationService.js";
+import { broadcastMessage } from "../realtime/messageSocket.js";
+
+export async function getUnreadMessagesCount(userId) {
+  const conversations = await Conversation.find({ participants: userId }).select("_id");
+  const conversationIds = conversations.map((c) => c._id);
+  return Message.countDocuments({
+    conversationId: { $in: conversationIds },
+    senderId: { $ne: userId },
+    readBy: { $ne: userId },
+  });
+}
 
 export async function listConversations(userId) {
   const conversations = await Conversation.find({
@@ -898,24 +908,18 @@ export async function sendMessage(conversationId, senderId, content = "", files 
     conversation.lastMessageAt = new Date();
     await conversation.save();
 
-    const sender = await User.findById(senderId);
-    const otherParticipants = conversation.participants.filter(
-      (p) => p.toString() !== senderId.toString(),
+    const populatedMessage = await Message.findById(message._id).populate(
+      "senderId",
+      "name email avatarUrl",
     );
 
-    for (const recipientId of otherParticipants) {
-      await createNotification({
-        recipientId,
-        senderId,
-        type: "message",
-        entityType: "conversation",
-        entityId: conversation._id,
-        title: `New message from ${sender?.name || "User"}`,
-        message: (cleanContent || attachmentSummary).slice(0, 120),
-      });
-    }
+    const updatedConversation = await Conversation.findById(conversation._id)
+      .populate("participants", "name email avatarUrl headline bio activeRole roles")
+      .populate("relatedStartupId", "name slug logoUrl");
 
-    return Message.findById(message._id).populate("senderId", "name email avatarUrl");
+    broadcastMessage(updatedConversation, populatedMessage);
+
+    return populatedMessage;
   } catch (error) {
     await removeStoredAttachments(attachments);
     throw error;

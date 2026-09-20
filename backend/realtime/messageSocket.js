@@ -7,9 +7,46 @@ import { getUserIdFromToken } from "../utils/token.js";
 const MESSAGE_SOCKET_PATH = "/ws/messages";
 const HEARTBEAT_MS = 30000;
 
+const clientsByUserId = new Map();
+
+export function broadcastToUser(userId, payload) {
+  if (!userId) return;
+  const uid = userId._id ? userId._id.toString() : userId.toString();
+  const clients = clientsByUserId.get(uid);
+  if (!clients) return;
+  for (const client of clients) {
+    sendJson(client, payload);
+  }
+}
+
+export function broadcastNotification(recipientId, notification) {
+  broadcastToUser(recipientId, {
+    type: "notification:new",
+    notification,
+  });
+}
+
+export function broadcastMessage(conversation, message, { excludeSocket } = {}) {
+  const participants = conversation.participants || [];
+  for (const participant of participants) {
+    const uid = participant._id ? participant._id.toString() : participant.toString();
+    const clients = clientsByUserId.get(uid);
+    if (!clients) continue;
+    for (const client of clients) {
+      if (client !== excludeSocket) {
+        sendJson(client, {
+          type: "message:new",
+          conversationId: conversation._id.toString(),
+          message,
+          conversation,
+        });
+      }
+    }
+  }
+}
+
 export function attachMessageSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
-  const clientsByUserId = new Map();
 
   server.on("upgrade", async (request, socket, head) => {
     const url = new URL(request.url || "", "http://localhost");
