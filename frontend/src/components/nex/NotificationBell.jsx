@@ -11,6 +11,7 @@ import {
   FiX,
   FiZap,
 } from "react-icons/fi";
+import { useNavigate } from "@tanstack/react-router";
 import {
   getNotifications,
   markAllNotificationsAsRead,
@@ -19,6 +20,15 @@ import {
 } from "@/lib/api/notificationClient";
 import { cn } from "@/lib/utils";
 import { USER_ROLE_BADGES } from "@/utils/enums";
+
+export const ACTIONABLE_REQUEST_TYPES = [
+  "intro_request",
+  "application",
+  "mentorship",
+  "mentorship_request",
+  "connection_request",
+  "investment_interest",
+];
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -32,7 +42,8 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-export function NotificationBell({ className }) {
+export function NotificationBell({ className, dropdownPosition = "right", onCountChange }) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -46,9 +57,16 @@ export function NotificationBell({ className }) {
     if (!silent) setLoading(true);
     try {
       const res = await getNotifications();
-      setNotifications(res.notifications || []);
-      setUnreadCount(res.unreadCount || 0);
-      setPendingCount(res.pendingRequestsCount || 0);
+      const notifs = res.notifications || res.data || [];
+      setNotifications(notifs);
+      const unread = res.unreadCount ?? notifs.filter((n) => !n.read).length;
+      const pending = res.pendingRequestsCount ?? notifs.filter((n) => ACTIONABLE_REQUEST_TYPES.includes(n.type) && n.status === "pending").length;
+      setUnreadCount(unread);
+      setPendingCount(pending);
+      onCountChange?.({ unreadCount: unread, pendingCount: pending, notifications: notifs });
+      window.dispatchEvent(new CustomEvent("nex:notifications_updated", {
+        detail: { unreadCount: unread, pendingCount: pending, notifications: notifs }
+      }));
     } catch {
       // silent catch for polling
     } finally {
@@ -56,13 +74,29 @@ export function NotificationBell({ className }) {
     }
   }
 
-  // Initial fetch and auto-polling every 10 seconds
+  // Initial fetch and auto-polling every 8 seconds
   useEffect(() => {
     loadNotifications();
     const interval = setInterval(() => {
       loadNotifications(true);
-    }, 10000);
-    return () => clearInterval(interval);
+    }, 8000);
+
+    const handleExternalUpdate = (e) => {
+      if (e?.detail) {
+        if (typeof e.detail.unreadCount === "number") setUnreadCount(e.detail.unreadCount);
+        if (typeof e.detail.pendingCount === "number") setPendingCount(e.detail.pendingCount);
+        if (Array.isArray(e.detail.notifications)) setNotifications(e.detail.notifications);
+      } else {
+        loadNotifications(true);
+      }
+    };
+
+    window.addEventListener("nex:notifications_updated", handleExternalUpdate);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("nex:notifications_updated", handleExternalUpdate);
+    };
   }, []);
 
   // Handle outside click to close dropdown
@@ -84,7 +118,11 @@ export function NotificationBell({ className }) {
     try {
       await markAllNotificationsAsRead();
       setUnreadCount(0);
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      const updated = notifications.map((n) => ({ ...n, read: true }));
+      setNotifications(updated);
+      window.dispatchEvent(new CustomEvent("nex:notifications_updated", {
+        detail: { unreadCount: 0, pendingCount, notifications: updated }
+      }));
     } catch {
       /* silent */
     }
@@ -94,11 +132,31 @@ export function NotificationBell({ className }) {
     if (!item.read) {
       try {
         await markNotificationAsRead(item.id);
-        setUnreadCount((c) => Math.max(0, c - 1));
-        setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true } : n)));
+        const nextUnread = Math.max(0, unreadCount - 1);
+        setUnreadCount(nextUnread);
+        const updated = notifications.map((n) => (n.id === item.id ? { ...n, read: true } : n));
+        setNotifications(updated);
+        window.dispatchEvent(new CustomEvent("nex:notifications_updated", {
+          detail: { unreadCount: nextUnread, pendingCount, notifications: updated }
+        }));
       } catch {
         /* silent */
       }
+    }
+
+    setOpen(false);
+
+    // Route intelligently based on notification context
+    if (item.type === "message" || item.entityType === "conversation") {
+      navigate({ to: "/workspace/messages" });
+    } else if (item.type === "intro_request" || item.type === "investment_interest" || item.entityType === "investment") {
+      navigate({ to: "/workspace/investors" });
+    } else if (item.type === "mentorship" || item.type === "mentorship_request" || item.entityType === "mentorship") {
+      navigate({ to: "/workspace/mentors" });
+    } else if (item.type === "application" || item.entityType === "opportunity") {
+      navigate({ to: "/workspace/opportunities" });
+    } else if (item.eventId || item.type?.includes("event")) {
+      navigate({ to: "/workspace/events" });
     }
   }
 
@@ -106,10 +164,16 @@ export function NotificationBell({ className }) {
     setRespondingId(notificationId);
     try {
       const res = await respondToNotification(notificationId, action);
-      const updated = res.notification;
-      setNotifications((prev) => prev.map((n) => (n.id === notificationId ? updated : n)));
-      setPendingCount((c) => Math.max(0, c - 1));
-      setUnreadCount((c) => Math.max(0, c - 1));
+      const updatedItem = res.notification;
+      const updated = notifications.map((n) => (n.id === notificationId ? updatedItem : n));
+      const nextPending = Math.max(0, pendingCount - 1);
+      const nextUnread = Math.max(0, unreadCount - 1);
+      setNotifications(updated);
+      setPendingCount(nextPending);
+      setUnreadCount(nextUnread);
+      window.dispatchEvent(new CustomEvent("nex:notifications_updated", {
+        detail: { unreadCount: nextUnread, pendingCount: nextPending, notifications: updated }
+      }));
     } catch (err) {
       console.error("Failed to respond to notification:", err);
     } finally {
@@ -119,8 +183,13 @@ export function NotificationBell({ className }) {
 
   const displayedNotifications =
     filter === "requests"
-      ? notifications.filter((n) => ["intro_request", "application", "mentorship"].includes(n.type))
+      ? notifications.filter((n) => ACTIONABLE_REQUEST_TYPES.includes(n.type))
       : notifications;
+
+  const dropdownClass =
+    dropdownPosition === "sidebar"
+      ? "fixed left-4 bottom-16 sm:left-64 sm:bottom-auto sm:top-16 z-50 w-[340px] sm:w-[390px] max-w-[calc(100vw-2rem)] rounded-3xl border border-border/90 bg-card/98 p-4 shadow-2xl backdrop-blur-xl"
+      : "absolute right-0 top-full mt-2.5 z-50 w-[360px] sm:w-[420px] max-w-[calc(100vw-2rem)] rounded-3xl border border-border/90 bg-card/95 p-4 shadow-2xl backdrop-blur-xl";
 
   return (
     <div ref={containerRef} className={cn("relative inline-block", className)}>
@@ -155,7 +224,7 @@ export function NotificationBell({ className }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="absolute right-0 top-full mt-2.5 z-50 w-[360px] sm:w-[420px] max-w-[calc(100vw-2rem)] rounded-3xl border border-border/90 bg-card/95 p-4 shadow-2xl backdrop-blur-xl"
+            className={dropdownClass}
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
@@ -242,7 +311,7 @@ export function NotificationBell({ className }) {
                     key={item.id}
                     onClick={() => handleNotificationClick(item)}
                     className={cn(
-                      "group relative rounded-2xl border p-3.5 transition-all",
+                      "group relative cursor-pointer rounded-2xl border p-3.5 transition-all",
                       !item.read
                         ? "border-primary/30 bg-primary/5 shadow-xs"
                         : "border-border/60 bg-secondary/40 hover:bg-secondary/70",
@@ -296,8 +365,8 @@ export function NotificationBell({ className }) {
                           {item.message}
                         </p>
 
-                        {/* Action Buttons for Pending Requests */}
-                        {item.status === "pending" && (
+                        {/* Action Buttons for Pending Requests ONLY */}
+                        {ACTIONABLE_REQUEST_TYPES.includes(item.type) && item.status === "pending" && (
                           <div className="mt-3 flex items-center gap-2 pt-1 border-t border-border/40">
                             <button
                               type="button"
@@ -325,12 +394,12 @@ export function NotificationBell({ className }) {
                         )}
 
                         {/* Status Badge if already responded */}
-                        {item.status === "approved" && (
+                        {ACTIONABLE_REQUEST_TYPES.includes(item.type) && item.status === "approved" && (
                           <div className="mt-2 flex items-center gap-1 text-[11px] font-bold text-emerald-500">
                             <FiCheck className="size-3.5" /> Approved
                           </div>
                         )}
-                        {item.status === "rejected" && (
+                        {ACTIONABLE_REQUEST_TYPES.includes(item.type) && item.status === "rejected" && (
                           <div className="mt-2 flex items-center gap-1 text-[11px] font-bold text-destructive">
                             <FiX className="size-3.5" /> Declined
                           </div>

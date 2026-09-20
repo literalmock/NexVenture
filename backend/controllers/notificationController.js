@@ -1,6 +1,7 @@
 import Notification from "../models/Notification.js";
 import Startup from "../models/Startup.js";
 import User from "../models/User.js";
+import { ACTIONABLE_REQUEST_TYPES } from "../services/notificationService.js";
 
 /**
  * GET /notifications
@@ -25,6 +26,7 @@ export async function getNotifications(req, res, next) {
     const pendingRequestsCount = await Notification.countDocuments({
       $or: [{ recipient: req.userId }, { recipientId: req.userId }],
       status: "pending",
+      type: { $in: ACTIONABLE_REQUEST_TYPES },
     });
 
     const dtos = notifications.map(toNotificationDTO);
@@ -339,7 +341,7 @@ function toNotificationDTO(n) {
     startupId: n.startupId || null,
     startupName: n.startupName || null,
     eventId: n.eventId || null,
-    status: n.status || "pending",
+    status: ACTIONABLE_REQUEST_TYPES.includes(n.type) ? (n.status || "pending") : (n.status === "approved" || n.status === "rejected" ? n.status : null),
     read: Boolean(n.read),
     createdAt: n.createdAt,
   };

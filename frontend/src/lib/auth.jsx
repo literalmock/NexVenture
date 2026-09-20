@@ -18,24 +18,34 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState(null);
   useEffect(() => {
     async function initSession() {
-      try {
-        const token = localStorage.getItem(TOKEN_KEY);
-        const cachedUser = localStorage.getItem(USER_KEY);
-        if (cachedUser) {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const cachedUser = localStorage.getItem(USER_KEY);
+      if (cachedUser) {
+        try {
           setUser(JSON.parse(cachedUser));
+        } catch {
+          /* ignore corrupted json */
         }
-        if (token) {
-          const freshUser = await fetchCurrentUser(token);
-          setUser(freshUser);
-          localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
-        }
-      } catch {
-        setUser(null);
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
-      } finally {
-        setReady(true);
       }
+      if (token) {
+        try {
+          const freshUser = await fetchCurrentUser(token);
+          if (freshUser) {
+            setUser(freshUser);
+            localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+          }
+        } catch (err) {
+          // Only clear session if server explicitly states token is invalid or unauthorized
+          if (err?.status === 401 || err?.status === 403) {
+            setUser(null);
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(USER_KEY);
+          }
+        }
+      } else {
+        setUser(null);
+      }
+      setReady(true);
     }
     initSession();
   }, []);

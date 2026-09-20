@@ -81,7 +81,9 @@ export async function request(path, { method = "GET", body, token } = {}) {
   const data = text ? JSON.parse(text) : {};
 
   if (!res.ok || data.success === false) {
-    throw new Error(getErrorMessage(data, res.statusText || "Request failed"));
+    const error = new Error(getErrorMessage(data, res.statusText || "Request failed"));
+    error.status = res.status;
+    throw error;
   }
 
   return data;

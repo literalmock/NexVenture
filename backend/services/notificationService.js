@@ -3,6 +3,15 @@ import Notification from "../models/Notification.js";
 /**
  * Creates and persists a notification in the database.
  */
+export const ACTIONABLE_REQUEST_TYPES = [
+  "intro_request",
+  "application",
+  "mentorship",
+  "mentorship_request",
+  "connection_request",
+  "investment_interest",
+];
+
 export async function createNotification({
   recipientId,
   senderId,
@@ -13,12 +22,19 @@ export async function createNotification({
   message,
   startupId = null,
   startupName = null,
-  status = "pending",
+  status = null,
 }) {
   try {
     if (!recipientId || !senderId) return null;
     // Don't notify self
     if (recipientId.toString() === senderId.toString()) return null;
+
+    const resolvedStatus =
+      status !== null
+        ? status
+        : ACTIONABLE_REQUEST_TYPES.includes(type)
+          ? "pending"
+          : null;
 
     const notification = await Notification.create({
       recipient: recipientId,
@@ -32,7 +48,7 @@ export async function createNotification({
       message,
       startupId,
       startupName,
-      status,
+      status: resolvedStatus,
       read: false,
     });
 

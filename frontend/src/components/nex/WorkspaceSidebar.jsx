@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   FiBookmark,
   FiCalendar,
@@ -17,6 +18,8 @@ import {
 } from "react-icons/fi";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Logo } from "@/components/nex/Logo";
+import { NotificationBell } from "@/components/nex/NotificationBell";
+import { getNotifications } from "@/lib/api/notificationClient";
 import { useAuth } from "@/lib/auth";
 import { USER_ROLE_BADGES } from "@/utils/enums";
 import { cn } from "@/lib/utils";
@@ -75,6 +78,49 @@ export function WorkspaceSidebar({ open, onClose }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
+  const [unreadCounts, setUnreadCounts] = useState({ total: 0, messages: 0, requests: 0 });
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchCounts() {
+      try {
+        const res = await getNotifications();
+        if (!mounted) return;
+        const notifs = res.notifications || res.data || [];
+        const total = res.unreadCount ?? notifs.filter((n) => !n.read).length;
+        const messages = notifs.filter((n) => n.type === "message" && !n.read).length;
+        const requests = res.pendingRequestsCount ?? notifs.filter((n) => n.status === "pending").length;
+        setUnreadCounts({ total, messages, requests });
+      } catch {
+        // silent
+      }
+    }
+
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 8000);
+
+    const handleUpdate = (e) => {
+      if (e?.detail) {
+        const notifs = e.detail.notifications || [];
+        const total = e.detail.unreadCount ?? notifs.filter((n) => !n.read).length;
+        const messages = notifs.filter((n) => n.type === "message" && !n.read).length;
+        const requests = e.detail.pendingCount ?? notifs.filter((n) => n.status === "pending").length;
+        setUnreadCounts({ total, messages, requests });
+      } else {
+        fetchCounts();
+      }
+    };
+
+    window.addEventListener("nex:notifications_updated", handleUpdate);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+      window.removeEventListener("nex:notifications_updated", handleUpdate);
+    };
+  }, []);
+
   const activeRole = user?.activeRole || user?.role;
   const navItems = NAV_BY_ROLE[activeRole] ?? NAV_BY_ROLE.founder;
   const badge = USER_ROLE_BADGES[activeRole] ?? "Member";
@@ -112,15 +158,18 @@ export function WorkspaceSidebar({ open, onClose }) {
           <span className="font-display text-[15px] font-bold tracking-tight">NEXVENTURE</span>
         </div>
 
-        {/* Role badge */}
-        <div className="mt-4 mx-2 flex items-center gap-2.5 rounded-xl bg-primary/8 px-3 py-2.5">
-          <span className="flex size-8 items-center justify-center rounded-lg [background-image:var(--gradient-brand)] text-[11px] font-bold text-primary-foreground">
-            {initials}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold leading-tight">{user?.name}</p>
-            <p className="text-[11px] text-primary font-medium">{badge}</p>
+        {/* Role badge and Notification Bell */}
+        <div className="mt-4 mx-2 flex items-center justify-between gap-2.5 rounded-xl bg-primary/8 px-3 py-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg [background-image:var(--gradient-brand)] text-[11px] font-bold text-primary-foreground">
+              {initials}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold leading-tight">{user?.name}</p>
+              <p className="text-[11px] text-primary font-medium">{badge}</p>
+            </div>
           </div>
+          <NotificationBell dropdownPosition="sidebar" />
         </div>
 
         {/* Navigation */}
@@ -128,6 +177,9 @@ export function WorkspaceSidebar({ open, onClose }) {
           {navItems.map((item) => {
             const active =
               item.to === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.to);
+            const isMessages = item.label === "Messages";
+            const messageBadgeCount = isMessages ? unreadCounts.messages : 0;
+
             return (
               <button
                 key={item.label}
@@ -143,8 +195,13 @@ export function WorkspaceSidebar({ open, onClose }) {
                     : "text-muted-foreground hover:translate-x-0.5 hover:bg-secondary hover:text-foreground",
                 )}
               >
-                <item.icon className={cn("size-4", active && "text-primary")} />
-                {item.label}
+                <item.icon className={cn("size-4 shrink-0", active && "text-primary")} />
+                <span className="truncate">{item.label}</span>
+                {messageBadgeCount > 0 && (
+                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground shadow-sm animate-pulse">
+                    {messageBadgeCount > 9 ? "9+" : messageBadgeCount}
+                  </span>
+                )}
               </button>
             );
           })}
